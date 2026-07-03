@@ -1,0 +1,2 @@
+"""Investment dashboard extension modules."""
+
