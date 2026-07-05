@@ -1,0 +1,38 @@
+name: Apply Codex App Patch
+
+on:
+  push:
+    paths:
+      - ".github/workflows/apply-codex-app-patch.yml"
+      - "patches/app_py_production_update.patch"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply app.py patch
+        id: apply_patch
+        run: |
+          if git apply --check patches/app_py_production_update.patch; then
+            git apply --whitespace=nowarn patches/app_py_production_update.patch
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Patch is already applied or no longer matches. Skipping."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit patched app
+        if: steps.apply_patch.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.py
+          git commit -m "Apply production dashboard app update"
+          git push
