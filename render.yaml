@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: stancedash
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /_stcore/health
+    envVars:
+      - key: BNK_VERIFY_SSL
+        value: "false"
+      - key: DART_API_KEY
+        sync: false
+      - key: ECOS_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: KIS_APP_KEY
+        sync: false
+      - key: KIS_APP_SECRET
+        sync: false
+      - key: KIS_BASE_URL
+        value: https://openapi.koreainvestment.com:9443
