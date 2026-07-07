@@ -218,16 +218,53 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
+    html,
+    body {
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+        overscroll-behavior-x: none;
+    }
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+    }
     .stApp {
         background:
             radial-gradient(circle at top left, rgba(255, 77, 77, 0.08), transparent 28%),
             radial-gradient(circle at top right, rgba(65, 105, 225, 0.08), transparent 24%),
             linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
         font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "NanumGothic", sans-serif;
+        width: 100%;
+        max-width: 100vw;
+        overflow-x: hidden;
+        overscroll-behavior-x: none;
     }
     .block-container {
         padding-top: 1.4rem;
         padding-bottom: 2rem;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stVerticalBlock"],
+    [data-testid="stHorizontalBlock"],
+    [data-testid="column"],
+    .element-container {
+        max-width: 100%;
+        min-width: 0;
+    }
+    [data-testid="stDataFrame"],
+    [data-testid="stTable"],
+    [data-testid="stImage"],
+    [data-testid="stPyplot"],
+    iframe,
+    canvas,
+    svg {
+        max-width: 100%;
     }
     .hero-title {
         font-size: 2rem;
@@ -524,6 +561,7 @@ CUSTOM_CSS = """
     }
     .command-table {
         width: 100%;
+        max-width: 100%;
         border-collapse: collapse;
         font-size: 0.82rem;
     }
@@ -638,6 +676,52 @@ CUSTOM_CSS = """
         }
     }
     @media (max-width: 560px) {
+        html,
+        body,
+        .stApp {
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+            overscroll-behavior-x: none;
+        }
+        .block-container {
+            max-width: 100vw !important;
+            padding-left: 0.75rem;
+            padding-right: 0.75rem;
+        }
+        .metric-card,
+        .signal-box,
+        .decision-report,
+        .insight-panel,
+        .quality-banner,
+        .action-panel {
+            width: 100%;
+            max-width: 100%;
+        }
+        .signal-row {
+            grid-template-columns: 54px minmax(0, 1fr) 48px;
+            gap: 6px;
+        }
+        .rank-row {
+            grid-template-columns: 24px minmax(86px, 1fr) 42px 46px 50px 42px;
+            gap: 5px;
+        }
+        .rank-header {
+            font-size: 0.66rem;
+        }
+        .row-value {
+            font-size: 0.7rem;
+        }
+        .row-label {
+            font-size: 0.76rem;
+        }
+        .command-table {
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
+            overscroll-behavior-x: contain;
+            -webkit-overflow-scrolling: touch;
+        }
         .decision-grid {
             grid-template-columns: 1fr;
         }
@@ -655,6 +739,9 @@ CUSTOM_CSS = """
             linear-gradient(135deg, #070b1a 0%, #111827 48%, #1e1236 100%);
         border: 1px solid rgba(196, 181, 253, 0.22);
         box-shadow: 0 18px 42px rgba(15, 23, 42, 0.22);
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
     }
     .portfolio-shell .section-title,
     .portfolio-shell .small-note {
@@ -783,6 +870,9 @@ CUSTOM_CSS = """
         display: flex;
         gap: 8px;
         overflow-x: auto;
+        max-width: 100%;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
         padding-bottom: 3px;
         margin-top: 8px;
     }
@@ -912,7 +1002,10 @@ CUSTOM_CSS = """
     .korea-badge.muted { background: rgba(100, 116, 139, 0.82); }
     .korea-table-wrap {
         width: 100%;
+        max-width: 100%;
         overflow-x: auto;
+        overscroll-behavior-x: contain;
+        -webkit-overflow-scrolling: touch;
         border-radius: 12px;
         border: 1px solid rgba(196, 181, 253, 0.14);
     }
@@ -1021,6 +1114,14 @@ CUSTOM_CSS = """
         }
     }
     @media (max-width: 560px) {
+        .portfolio-shell,
+        .portfolio-card,
+        .portfolio-head,
+        .korea-card,
+        .fear-greed-panel {
+            width: 100%;
+            max-width: 100%;
+        }
         .portfolio-shell.korea-shell {
             padding: 12px;
             border-radius: 12px;
@@ -1029,7 +1130,7 @@ CUSTOM_CSS = """
             grid-template-columns: 1fr;
         }
         .korea-table {
-            min-width: 720px;
+            min-width: 640px;
         }
     }
 </style>
