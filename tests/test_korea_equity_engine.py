@@ -24,6 +24,7 @@ from src.korea_equity import (
     formatConfidence,
     formatKRW,
     formatPercent,
+    formatSignedPercent,
     formatRiskBadge,
     formatTradingValue,
     formatVolume,
@@ -131,11 +132,19 @@ class KoreaEquityEngineTests(unittest.TestCase):
         self.assertEqual(formatVolume(12_300), "1.2만주")
         self.assertEqual(formatTradingValue(250_000_000), "2.5억원")
         self.assertEqual(formatConfidence(0.67), "67%")
+        self.assertEqual(formatSignedPercent(0.017), "+1.7%")
+        self.assertEqual(formatSignedPercent(-0.075), "-7.5%")
         self.assertEqual(formatRiskBadge("high"), "높음")
 
     def test_visual_bucket_helpers_are_stable(self) -> None:
         self.assertEqual(fearGreedBand(10)["label"], "극단 공포")
+        self.assertEqual(fearGreedBand(20)["label"], "극단 공포")
+        self.assertEqual(fearGreedBand(21)["label"], "공포")
+        self.assertEqual(fearGreedBand(40)["label"], "공포")
+        self.assertEqual(fearGreedBand(41)["label"], "중립")
         self.assertEqual(fearGreedBand(50)["label"], "중립")
+        self.assertEqual(fearGreedBand(61)["label"], "탐욕")
+        self.assertEqual(fearGreedBand(81)["label"], "극단 탐욕")
         self.assertEqual(fearGreedBand(90)["label"], "극단 탐욕")
         self.assertEqual(fearGreedBand(None)["label"], "N/A")
         self.assertEqual(heatmapBucket(80)["label"], "강함")

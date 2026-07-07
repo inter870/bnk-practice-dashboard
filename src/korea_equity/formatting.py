@@ -37,6 +37,13 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def normalizeNegativeZero(value: Any, epsilon: float = 1e-12) -> float | None:
+    number = _finite(value)
+    if number is None:
+        return None
+    return 0.0 if abs(number) < epsilon else number
+
+
 def safeDisplay(value: Any, fallback: str = "-") -> str:
     if value is None:
         return fallback
@@ -76,7 +83,7 @@ def formatTradingValue(value: Any) -> str:
 
 
 def formatPercent(value: Any, signed: bool = False, digits: int = 1) -> str:
-    number = _finite(value)
+    number = normalizeNegativeZero(value)
     if number is None:
         return "-"
     prefix = "+" if signed and number > 0 else ""
@@ -109,6 +116,34 @@ def formatConfidence(value: Any) -> str:
     return formatPercent(value, digits=0)
 
 
+def formatDirection(value: Any) -> str:
+    return {
+        "positive": "긍정",
+        "neutral": "중립",
+        "negative": "부정",
+        "mixed": "혼재",
+    }.get(str(value or "").lower(), safeDisplay(value))
+
+
+def formatSeverity(value: Any) -> str:
+    return {
+        "low": "낮음",
+        "medium": "보통",
+        "high": "높음",
+        "critical": "심각",
+    }.get(str(value or "").lower(), safeDisplay(value))
+
+
+def formatRegime(value: Any) -> str:
+    return {
+        "panic": "패닉",
+        "risk_off": "위험회피",
+        "neutral": "중립",
+        "risk_on": "위험선호",
+        "recovery": "회복",
+    }.get(str(value or "").lower(), safeDisplay(value))
+
+
 def formatRiskBadge(risk: Any) -> str:
     return RISK_LABELS.get(str(risk or "").lower(), safeDisplay(risk))
 
@@ -129,28 +164,28 @@ def fearGreedBand(score: Any) -> dict[str, str]:
             "color": "#94a3b8",
             "advice": "데이터가 부족합니다. 시장 심리 지표가 확인될 때까지 보수적으로 해석합니다.",
         }
-    if number <= 24:
+    if number <= 20:
         return {
             "label": "극단 공포",
             "tone": "danger",
             "color": "#ef4444",
             "advice": "공포가 매우 큰 구간입니다. 분할 접근과 손실 제한이 우선입니다.",
         }
-    if number <= 44:
+    if number <= 40:
         return {
             "label": "공포",
             "tone": "warning",
             "color": "#f97316",
             "advice": "공포 우위 구간입니다. 공격적 추격보다 가격 확인과 분할 검토가 유리합니다.",
         }
-    if number <= 55:
+    if number <= 60:
         return {
             "label": "중립",
             "tone": "muted",
             "color": "#94a3b8",
             "advice": "중립 구간입니다. 방향이 확인되기 전까지 비중을 크게 늘리지 않습니다.",
         }
-    if number <= 74:
+    if number <= 80:
         return {
             "label": "탐욕",
             "tone": "positive",

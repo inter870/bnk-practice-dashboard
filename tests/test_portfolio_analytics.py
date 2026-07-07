@@ -83,6 +83,18 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertEqual(format_currency(1234), "1,234원")
         self.assertEqual(format_percent(0.1234, signed=True), "+12.3%")
 
+    def test_dashboard_metric_format_examples(self):
+        self.assertEqual(format_percent(0.084), "8.4%")
+        self.assertEqual(format_percent(0.976, signed=True), "+97.6%")
+        self.assertEqual(format_percent(0.452), "45.2%")
+        self.assertEqual(format_percent(-0.125), "-12.5%")
+        self.assertEqual(format_percent(0.383, signed=True), "+38.3%")
+        self.assertEqual(format_percent(0.262), "26.2%")
+        self.assertEqual(format_percent(0.0, signed=True), "0.0%")
+        self.assertEqual(f"{0.12:.2f}", "0.12")
+        self.assertEqual(f"{1.30:.2f}", "1.30")
+        self.assertEqual(f"{0.202:.3f}", "0.202")
+
 
 if __name__ == "__main__":
     unittest.main()

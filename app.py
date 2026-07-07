@@ -78,19 +78,24 @@ from src.korea_equity import (
     candleSummaryText as korea_candle_summary_text,
     fearGreedBand as korea_fear_greed_band,
     formatConfidence as korea_format_confidence,
+    formatDirection as korea_format_direction,
     formatKRW as korea_format_krw,
     formatMarketLabel as korea_format_market_label,
     formatPercent as korea_format_percent,
+    formatRegime as korea_format_regime,
     formatRecommendationGrade as korea_format_grade,
+    formatSeverity as korea_format_severity,
     formatScore as korea_format_score,
     formatTradingValue as korea_format_trading_value,
     formatVolume as korea_format_volume,
+    normalizeNegativeZero as korea_normalize_negative_zero,
     getKoreaDashboardData,
     getKoreaPriceHistory,
     getKoreaSupplyDemand,
     heatmapBucket as korea_heatmap_bucket,
 )
 from src.korea_equity.explanations import explanation_for_factor, get_metric_explanation
+from src.korea_equity.design_tokens import KOREA_DASHBOARD_VISIBILITY_CSS, KOREA_MODULE_VISUAL_REGISTRY
 from src.korea_equity.interaction import (
     FACTOR_TO_METRIC,
     MODULE_DEFAULT_METRIC,
@@ -905,6 +910,603 @@ CUSTOM_CSS = """
         color: #ffffff;
         font-weight: 950;
     }
+    .portfolio-intelligence-shell {
+        border-radius: 18px;
+        padding: 18px;
+        margin: 1rem 0 1.2rem 0;
+        background:
+            radial-gradient(circle at 6% 0%, rgba(139, 92, 246, 0.28), transparent 26%),
+            radial-gradient(circle at 94% 12%, rgba(56, 189, 248, 0.12), transparent 24%),
+            linear-gradient(135deg, #080b16 0%, #0b1020 54%, #111827 100%);
+        border: 1px solid rgba(167, 139, 250, 0.30);
+        box-shadow: 0 22px 52px rgba(2, 6, 23, 0.30);
+        color: #f8fafc;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+    .portfolio-intelligence-title {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+    .portfolio-intelligence-title strong {
+        display: block;
+        color: #f8fafc;
+        font-size: 1.22rem;
+        font-weight: 900;
+        line-height: 1.15;
+    }
+    .portfolio-intelligence-title span {
+        display: block;
+        color: #cbd5e1;
+        font-size: 0.84rem;
+        font-weight: 650;
+        line-height: 1.45;
+        margin-top: 4px;
+    }
+    .portfolio-intelligence-grid {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) minmax(300px, 1.35fr) minmax(230px, 1fr);
+        gap: 14px;
+        align-items: stretch;
+    }
+    .pi-card {
+        min-height: 252px;
+        border-radius: 16px;
+        padding: 0;
+        background: linear-gradient(180deg, rgba(22, 32, 51, 0.98), rgba(17, 24, 39, 0.96));
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 16px 36px rgba(2, 6, 23, 0.24);
+        overflow: hidden;
+        color: #f8fafc;
+    }
+    .pi-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 16px;
+        background: linear-gradient(135deg, rgba(33, 20, 61, 0.98), rgba(59, 42, 122, 0.94));
+        border-bottom: 1px solid rgba(167, 139, 250, 0.26);
+    }
+    .pi-card-header strong {
+        color: #ffffff;
+        font-size: 0.98rem;
+        font-weight: 900;
+        letter-spacing: 0;
+    }
+    .pi-card-header span {
+        color: #d8b4fe;
+        font-size: 0.78rem;
+        font-weight: 750;
+    }
+    .pi-card-body {
+        padding: 16px;
+    }
+    .pi-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 27px;
+        border-radius: 999px;
+        padding: 5px 10px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(100, 116, 139, 0.18);
+        color: #e2e8f0;
+        font-size: 0.76rem;
+        font-weight: 850;
+        white-space: nowrap;
+    }
+    .pi-badge.risk {
+        background: rgba(239, 68, 68, 0.14);
+        border-color: rgba(248, 113, 113, 0.35);
+        color: #fecaca;
+    }
+    .pi-badge.warn {
+        background: rgba(245, 158, 11, 0.14);
+        border-color: rgba(251, 191, 36, 0.35);
+        color: #fde68a;
+    }
+    .pi-badge.good {
+        background: rgba(34, 197, 94, 0.14);
+        border-color: rgba(74, 222, 128, 0.34);
+        color: #bbf7d0;
+    }
+    .pi-badge.info {
+        background: rgba(56, 189, 248, 0.14);
+        border-color: rgba(56, 189, 248, 0.35);
+        color: #bae6fd;
+    }
+    .pi-health-score {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin: 2px 0 12px 0;
+    }
+    .pi-health-score strong {
+        color: #ffffff;
+        font-size: 2.75rem;
+        font-weight: 950;
+        line-height: 0.95;
+        font-variant-numeric: tabular-nums;
+    }
+    .pi-health-score span {
+        color: #cbd5e1;
+        font-size: 1rem;
+        font-weight: 800;
+    }
+    .pi-progress {
+        height: 11px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.28);
+        overflow: hidden;
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
+        margin: 10px 0 14px 0;
+    }
+    .pi-progress-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #ef4444, #f97316);
+        min-width: 2%;
+    }
+    .pi-reason-list {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+    }
+    .pi-reason {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        color: #cbd5e1;
+        font-size: 0.84rem;
+        font-weight: 700;
+        line-height: 1.45;
+    }
+    .pi-dot {
+        flex: 0 0 auto;
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        margin-top: 6px;
+        background: #f87171;
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.13);
+    }
+    .pi-allocation-row {
+        display: grid;
+        grid-template-columns: 58px minmax(86px, 1fr) minmax(116px, auto);
+        gap: 10px;
+        align-items: center;
+        min-height: 38px;
+        padding: 9px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .pi-allocation-row:last-child {
+        border-bottom: 0;
+    }
+    .pi-asset-label {
+        color: #f8fafc;
+        font-size: 0.86rem;
+        font-weight: 850;
+        white-space: nowrap;
+    }
+    .pi-allocation-track {
+        position: relative;
+        height: 10px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.28);
+        overflow: hidden;
+    }
+    .pi-allocation-fill {
+        height: 100%;
+        border-radius: 999px;
+        min-width: 2px;
+    }
+    .pi-allocation-value {
+        text-align: right;
+        color: #f8fafc;
+        font-size: 0.82rem;
+        font-weight: 850;
+        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+    }
+    .pi-allocation-value small {
+        color: #94a3b8;
+        font-size: 0.75rem;
+        font-weight: 760;
+    }
+    .pi-rebalance-list {
+        display: grid;
+        gap: 10px;
+    }
+    .pi-rebalance-item {
+        border-radius: 13px;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.54);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+    }
+    .pi-rebalance-top,
+    .pi-rebalance-bottom {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+    }
+    .pi-rebalance-asset {
+        color: #f8fafc;
+        font-size: 0.95rem;
+        font-weight: 900;
+        line-height: 1.25;
+    }
+    .pi-rebalance-reason {
+        color: #cbd5e1;
+        font-size: 0.8rem;
+        font-weight: 700;
+        line-height: 1.45;
+        margin-top: 7px;
+    }
+    .pi-rebalance-amount {
+        color: #ffffff;
+        font-size: 1.02rem;
+        font-weight: 950;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .pi-rebalance-impact {
+        color: #94a3b8;
+        font-size: 0.76rem;
+        font-weight: 700;
+        line-height: 1.35;
+        margin-top: 4px;
+    }
+    .pi-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 14px;
+        margin: 14px 0;
+        align-items: stretch;
+    }
+    .pi-risk-card {
+        grid-column: span 5;
+    }
+    .pi-concentration-card {
+        grid-column: span 3;
+    }
+    .pi-insight-card {
+        grid-column: span 4;
+    }
+    .pi-signals-card {
+        grid-column: span 12;
+        min-height: auto;
+    }
+    .pi-card-subtitle {
+        color: #cbd5e1;
+        font-size: 0.78rem;
+        font-weight: 720;
+        line-height: 1.4;
+        margin-top: -2px;
+        margin-bottom: 13px;
+    }
+    .pi-metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+    .pi-metric-tile {
+        border-radius: 13px;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.58);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        min-height: 94px;
+    }
+    .pi-metric-label {
+        color: #cbd5e1;
+        font-size: 0.76rem;
+        font-weight: 820;
+        line-height: 1.2;
+    }
+    .pi-metric-value {
+        color: #ffffff;
+        font-size: 1.34rem;
+        font-weight: 950;
+        line-height: 1.05;
+        margin-top: 7px;
+        font-variant-numeric: tabular-nums;
+    }
+    .pi-metric-helper {
+        color: #94a3b8;
+        font-size: 0.72rem;
+        font-weight: 720;
+        line-height: 1.32;
+        margin-top: 6px;
+    }
+    .pi-tone-good .pi-metric-value,
+    .pi-value-good {
+        color: #86efac;
+    }
+    .pi-tone-risk .pi-metric-value,
+    .pi-value-risk {
+        color: #fca5a5;
+    }
+    .pi-tone-warn .pi-metric-value,
+    .pi-value-warn {
+        color: #fde68a;
+    }
+    .pi-tone-info .pi-metric-value,
+    .pi-value-info {
+        color: #bae6fd;
+    }
+    .pi-benchmark-strip {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-top: 12px;
+        border-radius: 13px;
+        padding: 12px 13px;
+        background: rgba(34, 197, 94, 0.10);
+        border: 1px solid rgba(74, 222, 128, 0.24);
+    }
+    .pi-benchmark-strip span {
+        color: #cbd5e1;
+        font-size: 0.78rem;
+        font-weight: 780;
+        line-height: 1.35;
+    }
+    .pi-benchmark-strip strong {
+        color: #86efac;
+        font-size: 1.12rem;
+        font-weight: 950;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .pi-holding-list,
+    .pi-signal-list,
+    .pi-insight-stack {
+        display: grid;
+        gap: 10px;
+    }
+    .pi-holding-row {
+        display: grid;
+        grid-template-columns: 24px minmax(68px, 1fr) minmax(64px, 1.2fr) 56px;
+        gap: 9px;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .pi-holding-row:last-child {
+        border-bottom: 0;
+    }
+    .pi-holding-rank {
+        width: 22px;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        color: #ddd6fe;
+        background: rgba(139, 92, 246, 0.16);
+        border: 1px solid rgba(167, 139, 250, 0.24);
+        font-size: 0.72rem;
+        font-weight: 900;
+    }
+    .pi-holding-symbol {
+        color: #ffffff;
+        font-size: 0.82rem;
+        font-weight: 920;
+        line-height: 1.15;
+    }
+    .pi-holding-name {
+        color: #94a3b8;
+        font-size: 0.68rem;
+        font-weight: 720;
+        line-height: 1.25;
+        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .pi-holding-track {
+        height: 9px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.26);
+        overflow: hidden;
+    }
+    .pi-holding-fill {
+        height: 100%;
+        border-radius: 999px;
+        min-width: 2px;
+    }
+    .pi-holding-weight {
+        color: #f8fafc;
+        font-size: 0.78rem;
+        font-weight: 900;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .pi-concentration-footer {
+        margin-top: 10px;
+        border-radius: 12px;
+        padding: 10px;
+        color: #cbd5e1;
+        background: rgba(239, 68, 68, 0.09);
+        border: 1px solid rgba(248, 113, 113, 0.20);
+        font-size: 0.76rem;
+        font-weight: 740;
+        line-height: 1.45;
+    }
+    .pi-signal-header,
+    .pi-signal-row {
+        display: grid;
+        grid-template-columns: minmax(98px, 0.85fr) minmax(150px, 1.2fr) 82px minmax(178px, 1fr);
+        gap: 12px;
+        align-items: center;
+    }
+    .pi-signal-header {
+        color: #94a3b8;
+        font-size: 0.72rem;
+        font-weight: 850;
+        padding: 0 11px 3px 11px;
+    }
+    .pi-signal-row {
+        border-radius: 13px;
+        padding: 10px 11px;
+        background: rgba(15, 23, 42, 0.44);
+        border: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .pi-signal-code {
+        color: #ffffff;
+        font-size: 0.88rem;
+        font-weight: 930;
+        font-variant-numeric: tabular-nums;
+    }
+    .pi-signal-name {
+        color: #cbd5e1;
+        font-size: 0.8rem;
+        font-weight: 760;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .pi-signal-change {
+        text-align: right;
+        font-size: 0.86rem;
+        font-weight: 930;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .pi-signal-badge {
+        justify-self: start;
+        max-width: 100%;
+        color: #cbd5e1;
+        background: rgba(100, 116, 139, 0.18);
+        border: 1px solid rgba(148, 163, 184, 0.24);
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-size: 0.76rem;
+        font-weight: 820;
+        line-height: 1.25;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .pi-insight-block {
+        border-radius: 13px;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+    .pi-insight-label {
+        color: #d8b4fe;
+        font-size: 0.72rem;
+        font-weight: 900;
+        line-height: 1.2;
+        margin-bottom: 7px;
+    }
+    .pi-insight-text {
+        color: #f8fafc;
+        font-size: 0.88rem;
+        font-weight: 820;
+        line-height: 1.5;
+    }
+    .pi-insight-text.muted {
+        color: #cbd5e1;
+        font-size: 0.8rem;
+        font-weight: 730;
+    }
+    .pi-insight-block.action {
+        background: rgba(245, 158, 11, 0.11);
+        border-color: rgba(251, 191, 36, 0.25);
+    }
+    @media (max-width: 900px) {
+        .portfolio-intelligence-shell {
+            padding: 14px;
+        }
+        .portfolio-intelligence-title {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+        .pi-card {
+            min-height: auto;
+        }
+        .portfolio-intelligence-grid {
+            grid-template-columns: 1fr;
+        }
+        .pi-detail-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .pi-risk-card,
+        .pi-concentration-card,
+        .pi-insight-card,
+        .pi-signals-card {
+            grid-column: span 2;
+        }
+    }
+    @media (max-width: 560px) {
+        .portfolio-intelligence-shell {
+            border-radius: 14px;
+            padding: 12px;
+        }
+        .pi-card-header,
+        .pi-card-body {
+            padding: 13px;
+        }
+        .pi-allocation-row {
+            grid-template-columns: 48px minmax(72px, 1fr);
+        }
+        .pi-allocation-value {
+            grid-column: 1 / -1;
+            text-align: left;
+        }
+        .pi-rebalance-top,
+        .pi-rebalance-bottom {
+            flex-direction: column;
+            align-items: stretch;
+        }
+        .pi-rebalance-amount {
+            text-align: left;
+        }
+        .pi-detail-grid {
+            grid-template-columns: 1fr;
+        }
+        .pi-risk-card,
+        .pi-concentration-card,
+        .pi-insight-card,
+        .pi-signals-card {
+            grid-column: 1 / -1;
+        }
+        .pi-metric-grid {
+            grid-template-columns: 1fr;
+        }
+        .pi-benchmark-strip {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+        .pi-holding-row {
+            grid-template-columns: 24px minmax(70px, 1fr) 56px;
+        }
+        .pi-holding-track {
+            grid-column: 2 / -1;
+        }
+        .pi-signal-header {
+            display: none;
+        }
+        .pi-signal-row {
+            grid-template-columns: 1fr auto;
+            gap: 7px 10px;
+        }
+        .pi-signal-name,
+        .pi-signal-badge {
+            grid-column: 1 / -1;
+        }
+        .pi-signal-change {
+            text-align: right;
+        }
+    }
     .watchlist-strip {
         display: flex;
         gap: 8px;
@@ -969,6 +1571,257 @@ CUSTOM_CSS = """
     }
     .korea-card.compact {
         min-height: unset;
+    }
+    .korea-os-shell {
+        border-radius: 18px;
+        padding: 18px;
+        margin: 18px 0;
+        background:
+            radial-gradient(circle at 8% 0%, rgba(139, 92, 246, 0.32), transparent 25%),
+            radial-gradient(circle at 92% 10%, rgba(56, 189, 248, 0.14), transparent 24%),
+            linear-gradient(135deg, #080b16 0%, #0b1020 54%, #111827 100%);
+        border: 1px solid rgba(167, 139, 250, 0.34);
+        box-shadow: 0 22px 52px rgba(2, 6, 23, 0.28);
+        color: #f8fafc;
+        overflow-x: hidden;
+    }
+    .korea-os-hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 14px;
+        padding-bottom: 14px;
+        border-bottom: 1px solid rgba(196, 181, 253, 0.18);
+        margin-bottom: 14px;
+    }
+    .korea-os-hero strong {
+        display: block;
+        color: #ffffff;
+        font-size: 1.34rem;
+        font-weight: 950;
+        line-height: 1.15;
+    }
+    .korea-os-hero span {
+        display: block;
+        color: #cbd5e1;
+        font-size: 0.86rem;
+        font-weight: 720;
+        line-height: 1.5;
+        margin-top: 5px;
+    }
+    .korea-os-nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 0 0 15px 0;
+    }
+    .korea-os-nav a {
+        text-decoration: none;
+        color: #ddd6fe;
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 0.72rem;
+        font-weight: 850;
+        background: rgba(88, 28, 135, 0.34);
+        border: 1px solid rgba(196, 181, 253, 0.22);
+    }
+    .korea-os-grid {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 14px;
+        align-items: stretch;
+    }
+    .korea-os-span-4 { grid-column: span 4; }
+    .korea-os-span-5 { grid-column: span 5; }
+    .korea-os-span-6 { grid-column: span 6; }
+    .korea-os-span-7 { grid-column: span 7; }
+    .korea-os-span-8 { grid-column: span 8; }
+    .korea-os-span-12 { grid-column: span 12; }
+    .korea-os-card {
+        min-height: 100%;
+        border-radius: 15px;
+        background: linear-gradient(180deg, rgba(24, 31, 52, 0.98), rgba(15, 23, 42, 0.95));
+        border: 1px solid rgba(148, 163, 184, 0.22);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 14px 34px rgba(2, 6, 23, 0.22);
+        overflow: hidden;
+    }
+    .korea-os-card-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 16px;
+        background: linear-gradient(135deg, rgba(33, 20, 61, 0.96), rgba(59, 42, 122, 0.88));
+        border-bottom: 1px solid rgba(167, 139, 250, 0.25);
+    }
+    .korea-os-card-title {
+        color: #ffffff;
+        font-size: 0.98rem;
+        font-weight: 950;
+        line-height: 1.2;
+    }
+    .korea-os-card-desc {
+        color: #cbd5e1;
+        font-size: 0.76rem;
+        font-weight: 720;
+        line-height: 1.45;
+        margin-top: 4px;
+    }
+    .korea-os-card-body {
+        padding: 14px;
+    }
+    .korea-os-step-row {
+        display: grid;
+        grid-template-columns: 36px minmax(106px, 0.86fr) 92px 64px minmax(112px, 0.9fr) minmax(180px, 1.35fr);
+        gap: 10px;
+        align-items: center;
+        padding: 11px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .korea-os-step-row:last-child {
+        border-bottom: 0;
+    }
+    .korea-os-step-num {
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        color: #ddd6fe;
+        font-size: 0.78rem;
+        font-weight: 950;
+        background: rgba(139, 92, 246, 0.20);
+        border: 1px solid rgba(167, 139, 250, 0.28);
+    }
+    .korea-os-label {
+        color: #f8fafc;
+        font-size: 0.84rem;
+        font-weight: 900;
+        line-height: 1.25;
+    }
+    .korea-os-muted {
+        color: #94a3b8;
+        font-size: 0.73rem;
+        font-weight: 720;
+        line-height: 1.38;
+        margin-top: 3px;
+    }
+    .korea-os-score {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 48px;
+        border-radius: 999px;
+        padding: 5px 9px;
+        color: #ffffff;
+        background: rgba(139, 92, 246, 0.18);
+        border: 1px solid rgba(167, 139, 250, 0.24);
+        font-size: 0.8rem;
+        font-weight: 950;
+        font-variant-numeric: tabular-nums;
+    }
+    .korea-os-reason {
+        color: #cbd5e1;
+        font-size: 0.78rem;
+        font-weight: 730;
+        line-height: 1.42;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+    .korea-os-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+    .korea-os-metrics.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .korea-os-metric {
+        border-radius: 13px;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.17);
+        min-height: 86px;
+    }
+    .korea-os-metric small {
+        display: block;
+        color: #cbd5e1;
+        font-size: 0.74rem;
+        font-weight: 850;
+    }
+    .korea-os-metric strong {
+        display: block;
+        color: #ffffff;
+        font-size: 1.12rem;
+        font-weight: 950;
+        line-height: 1.1;
+        margin-top: 8px;
+        font-variant-numeric: tabular-nums;
+    }
+    .korea-os-callout {
+        margin-top: 11px;
+        border-radius: 13px;
+        padding: 11px 12px;
+        background: rgba(245, 158, 11, 0.10);
+        border: 1px solid rgba(251, 191, 36, 0.22);
+        color: #fde68a;
+        font-size: 0.8rem;
+        font-weight: 780;
+        line-height: 1.45;
+    }
+    .korea-os-thesis-grid {
+        display: grid;
+        gap: 10px;
+    }
+    .korea-os-thesis {
+        border-radius: 13px;
+        padding: 12px;
+        background: rgba(15, 23, 42, 0.52);
+        border: 1px solid rgba(148, 163, 184, 0.16);
+    }
+    .korea-os-thesis b {
+        display: block;
+        color: #d8b4fe;
+        font-size: 0.76rem;
+        margin-bottom: 7px;
+    }
+    .korea-os-thesis span {
+        color: #f8fafc;
+        font-size: 0.82rem;
+        font-weight: 760;
+        line-height: 1.5;
+    }
+    .korea-os-scenario-row,
+    .korea-os-alert-row,
+    .korea-os-review-row {
+        display: grid;
+        grid-template-columns: minmax(130px, 1fr) 92px 76px minmax(120px, 1fr) minmax(170px, 1.2fr);
+        gap: 10px;
+        align-items: center;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+    .korea-os-scenario-row:last-child,
+    .korea-os-alert-row:last-child,
+    .korea-os-review-row:last-child {
+        border-bottom: 0;
+    }
+    .korea-os-mini-table .korea-table {
+        min-width: 620px;
+    }
+    .korea-safety-callout {
+        border-radius: 13px;
+        padding: 12px 13px;
+        margin-top: 12px;
+        color: #e2e8f0;
+        background: rgba(56, 189, 248, 0.10);
+        border: 1px solid rgba(56, 189, 248, 0.24);
+        font-size: 0.8rem;
+        font-weight: 760;
+        line-height: 1.45;
     }
     .korea-card-head {
         display: flex;
@@ -1091,7 +1944,9 @@ CUSTOM_CSS = """
     .korea-table-wrap {
         width: 100%;
         max-width: 100%;
+        max-height: 620px;
         overflow-x: auto;
+        overflow-y: auto;
         overscroll-behavior-x: contain;
         -webkit-overflow-scrolling: touch;
         border-radius: 12px;
@@ -1120,6 +1975,14 @@ CUSTOM_CSS = """
         background: rgba(15, 23, 42, 0.98);
         z-index: 1;
     }
+    .korea-table td.num,
+    .korea-table th.num {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .korea-table td.text {
+        text-align: left;
+    }
     .korea-table th {
         color: #c4b5fd;
         font-size: 0.72rem;
@@ -1144,6 +2007,10 @@ CUSTOM_CSS = """
         line-height: 1.48;
         white-space: normal;
         min-width: 210px;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
     }
     .korea-empty {
         border-radius: 12px;
@@ -1197,6 +2064,29 @@ CUSTOM_CSS = """
             flex-direction: column;
             align-items: flex-start;
         }
+        .korea-os-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .korea-os-span-4,
+        .korea-os-span-5,
+        .korea-os-span-6,
+        .korea-os-span-7,
+        .korea-os-span-8,
+        .korea-os-span-12 {
+            grid-column: span 2;
+        }
+        .korea-os-step-row,
+        .korea-os-scenario-row,
+        .korea-os-alert-row,
+        .korea-os-review-row {
+            grid-template-columns: 36px minmax(120px, 1fr) minmax(90px, auto);
+        }
+        .korea-os-step-row > :nth-child(n+4),
+        .korea-os-scenario-row > :nth-child(n+4),
+        .korea-os-alert-row > :nth-child(n+4),
+        .korea-os-review-row > :nth-child(n+4) {
+            grid-column: 2 / -1;
+        }
         .korea-module-meta {
             white-space: normal;
         }
@@ -1217,6 +2107,28 @@ CUSTOM_CSS = """
         .korea-metric-grid {
             grid-template-columns: 1fr;
         }
+        .korea-os-shell {
+            padding: 12px;
+            border-radius: 14px;
+        }
+        .korea-os-hero {
+            flex-direction: column;
+        }
+        .korea-os-grid {
+            grid-template-columns: 1fr;
+        }
+        .korea-os-span-4,
+        .korea-os-span-5,
+        .korea-os-span-6,
+        .korea-os-span-7,
+        .korea-os-span-8,
+        .korea-os-span-12 {
+            grid-column: 1 / -1;
+        }
+        .korea-os-metrics,
+        .korea-os-metrics.three {
+            grid-template-columns: 1fr;
+        }
         .korea-table {
             min-width: 640px;
         }
@@ -1225,6 +2137,7 @@ CUSTOM_CSS = """
 """
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+st.markdown(KOREA_DASHBOARD_VISIBILITY_CSS, unsafe_allow_html=True)
 
 
 DEFAULT_CODES = [
@@ -3064,18 +3977,18 @@ def fear_greed_zone(score: float | None) -> tuple[str, str, str]:
 
 
 def plot_fear_greed_bar(score: float | None, label: str, color: str) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(11, 1.9))
+    fig, ax = plt.subplots(figsize=(11, 2.15))
     fig.patch.set_facecolor("#0f172a")
     ax.set_facecolor("#0f172a")
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 1)
-    ax.barh(0.5, 100, color="#334155", height=0.28, edgecolor="none", alpha=0.82)
+    ax.barh(0.5, 100, color="#334155", height=0.30, edgecolor="none", alpha=0.86)
 
     if score is not None:
         safe_score = max(0, min(100, float(score)))
         ax.barh(0.5, safe_score, color=color, height=0.28, edgecolor="none")
         ax.scatter([safe_score], [0.5], s=120, color=color, edgecolors="#f8fafc", linewidths=1.2, zorder=5)
-        ax.text(safe_score, 0.88, f"{safe_score:.0f}", ha="center", va="bottom", fontsize=11, weight="bold", color=color)
+        ax.text(safe_score, 0.90, f"{safe_score:.0f}", ha="center", va="bottom", fontsize=12, weight="bold", color=color)
 
     bands = [
         (0, 24, "#dc2626", "극단 공포"),
@@ -3086,13 +3999,13 @@ def plot_fear_greed_bar(score: float | None, label: str, color: str) -> plt.Figu
     ]
     for band_start, band_end, band_color, text_label in bands:
         ax.axvspan(band_start, band_end, color=band_color, alpha=0.10)
-        ax.text((band_start + band_end) / 2, 0.14, text_label, ha="center", va="center", fontsize=8.5, color="#cbd5e1")
+        ax.text((band_start + band_end) / 2, 0.12, text_label, ha="center", va="center", fontsize=8.8, color="#dbeafe")
 
     ax.text(0, 1.08, "공포·탐욕 지수", ha="left", va="bottom", fontsize=13, weight="bold", color="#f8fafc")
     ax.text(100, 1.08, label, ha="right", va="bottom", fontsize=11, weight="bold", color=color)
     ax.set_yticks([])
     ax.set_xticks([0, 25, 50, 75, 100])
-    ax.tick_params(axis="x", labelsize=9, colors="#cbd5e1")
+    ax.tick_params(axis="x", labelsize=9.5, colors="#dbeafe")
     for spine in ax.spines.values():
         spine.set_visible(False)
     fig.tight_layout()
@@ -3211,14 +4124,14 @@ def build_return_figure(rows: list[dict[str, Any]], active_code: str | None) -> 
 
 def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
     open_c, high_c, low_c, close_c, vol_c = find_ohlcv_columns(df)
-    data = df.tail(60).copy()
+    data = df.copy()
     data = data[[open_c, high_c, low_c, close_c, vol_c]].dropna()
     if data.empty:
         fig, ax = plt.subplots(figsize=(10, 4))
         fig.patch.set_facecolor("#0f172a")
         ax.set_facecolor("#0f172a")
         ax.axis("off")
-        ax.text(0.5, 0.5, "최근 60거래일 가격·거래량 데이터가 부족합니다.", ha="center", va="center", fontsize=12, color="#cbd5e1")
+        ax.text(0.5, 0.5, "선택 범위의 가격·거래량 데이터가 부족합니다.", ha="center", va="center", fontsize=12, color="#cbd5e1")
         return fig
 
     dates = mdates.date2num(pd.to_datetime(data.index).to_pydatetime())
@@ -3236,8 +4149,8 @@ def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
         h = float(row[high_c])
         l = float(row[low_c])
         c = float(row[close_c])
-        candle_color = "#dc2626" if c >= o else "#2563eb"
-        ax1.vlines(dates[i], l, h, color=candle_color, linewidth=1.1, alpha=0.9)
+        candle_color = "#ef4444" if c >= o else "#60a5fa"
+        ax1.vlines(dates[i], l, h, color=candle_color, linewidth=1.25, alpha=0.96)
         body_low = min(o, c)
         body_height = max(abs(c - o), 0.01)
         ax1.add_patch(
@@ -3247,22 +4160,22 @@ def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
                 body_height,
                 facecolor=candle_color,
                 edgecolor=candle_color,
-                alpha=0.75,
+                alpha=0.88,
             )
         )
-        ax2.bar(dates[i], float(row[vol_c]), color=candle_color, width=0.6, alpha=0.7)
+        ax2.bar(dates[i], float(row[vol_c]), color=candle_color, width=0.62, alpha=0.76)
 
-    ax1.set_title(title, fontsize=13, weight="bold", loc="left", color="#f8fafc")
-    ax1.grid(True, axis="y", linestyle="--", alpha=0.18, color="#94a3b8")
-    ax1.set_ylabel("가격", fontsize=10, color="#cbd5e1")
-    ax2.set_ylabel("거래량", fontsize=10, color="#cbd5e1")
-    ax2.grid(True, axis="y", linestyle="--", alpha=0.18, color="#94a3b8")
+    ax1.set_title(title, fontsize=14, weight="bold", loc="left", color="#f8fafc")
+    ax1.grid(True, axis="y", linestyle="--", alpha=0.22, color="#94a3b8")
+    ax1.set_ylabel("가격", fontsize=10.5, color="#dbeafe")
+    ax2.set_ylabel("거래량", fontsize=10.5, color="#dbeafe")
+    ax2.grid(True, axis="y", linestyle="--", alpha=0.20, color="#94a3b8")
     ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
-    ax1.tick_params(axis="y", colors="#cbd5e1")
-    ax2.tick_params(axis="x", rotation=0, colors="#cbd5e1")
-    ax2.tick_params(axis="y", colors="#cbd5e1")
+    ax1.tick_params(axis="y", colors="#dbeafe", labelsize=9.5)
+    ax2.tick_params(axis="x", rotation=0, colors="#dbeafe", labelsize=9)
+    ax2.tick_params(axis="y", colors="#dbeafe", labelsize=9)
     for spine in [*ax1.spines.values(), *ax2.spines.values()]:
-        spine.set_color("#334155")
+        spine.set_color("#475569")
     plt.setp(ax1.get_xticklabels(), visible=False)
     fig.tight_layout()
     return fig
@@ -4446,21 +5359,35 @@ def plot_portfolio_drawdown_chart(drawdowns: list[dict[str, Any]]) -> plt.Figure
     return fig
 
 
-def render_portfolio_health_card(score: int, label: str, reasons: list[str], color: str) -> None:
-    reason_html = "".join(f"<div class='small-note'>- {html.escape(reason)}</div>" for reason in reasons[:3])
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>Portfolio Health</span><b style="color:{color};">{html.escape(label)}</b></div>
-            <div class="pressure-score"><strong>{score}</strong><span>/100</span></div>
-            <div class="meter-track"><div class="mini-fill" style="width:{score}%; background:{color};"></div></div>
-            {reason_html}
+def portfolio_health_card_html(score: int, label: str, reasons: list[str], color: str) -> str:
+    score = int(max(0, min(100, score)))
+    label_tone = "risk" if score < 40 else "warn" if score < 60 else "info" if score < 80 else "good"
+    reason_html = "".join(
+        f"<div class='pi-reason'><span class='pi-dot'></span><span>{html.escape(reason)}</span></div>"
+        for reason in reasons[:3]
+    )
+    return f"""
+        <div class="pi-card">
+            <div class="pi-card-header">
+                <strong>Portfolio Health</strong>
+                <span class="pi-badge {label_tone}">{html.escape(label)}</span>
+            </div>
+            <div class="pi-card-body">
+                <div class="pi-health-score"><strong>{score}</strong><span>/100</span></div>
+                <div class="pi-progress" aria-label="Portfolio Health {score}점">
+                    <div class="pi-progress-fill" style="width:{score}%; background:linear-gradient(90deg, {html.escape(color)}, #f97316);"></div>
+                </div>
+                <div class="pi-reason-list">{reason_html or "<div class='pi-reason'><span class='pi-dot'></span><span>포트폴리오 방어 우선</span></div>"}</div>
+            </div>
         </div>
         """
-    )
 
 
-def render_allocation_drift_card(drift: dict[str, dict[str, Any]]) -> None:
+def render_portfolio_health_card(score: int, label: str, reasons: list[str], color: str) -> None:
+    st.html(portfolio_health_card_html(score, label, reasons, color))
+
+
+def allocation_drift_card_html(drift: dict[str, dict[str, Any]]) -> str:
     rows = []
     for asset_class, row in drift.items():
         current = safe_float(row.get("currentWeight")) or 0.0
@@ -4468,125 +5395,247 @@ def render_allocation_drift_card(drift: dict[str, dict[str, Any]]) -> None:
         delta = safe_float(row.get("drift")) or 0.0
         status = str(row.get("status", "On target"))
         status_ko = "초과" if status == "Overweight" else "부족" if status == "Underweight" else "목표 근접"
-        color = "#dc2626" if delta > 0.03 else "#2563eb" if delta < -0.03 else "#64748b"
+        color = "#ef4444" if delta > 0.03 else "#38bdf8" if delta < -0.03 else "#8b5cf6"
+        badge_tone = "risk" if delta > 0.03 else "info" if delta < -0.03 else "good"
+        drift_text = f"{delta * 100:+.1f}%p" if abs(delta) >= 0.005 else "근접"
         rows.append(
             f"""
-            <div class="signal-row">
-                <div class="row-label">{html.escape(ASSET_CLASS_LABELS.get(asset_class, asset_class))}</div>
-                <div class="mini-track"><div class="mini-fill" style="width:{max(2, min(100, current * 100)):.1f}%; background:{color};"></div></div>
-                <div class="row-value" style="color:{color};">{current * 100:.1f}% / {target * 100:.1f}% · {status_ko}</div>
+            <div class="pi-allocation-row">
+                <div class="pi-asset-label">{html.escape(ASSET_CLASS_LABELS.get(asset_class, asset_class))}</div>
+                <div class="pi-allocation-track" aria-label="{html.escape(ASSET_CLASS_LABELS.get(asset_class, asset_class))} 현재 비중 {current * 100:.1f}%">
+                    <div class="pi-allocation-fill" style="width:{max(2, min(100, current * 100)):.1f}%; background:{color};"></div>
+                </div>
+                <div class="pi-allocation-value">
+                    {current * 100:.1f}% <small>/ {target * 100:.1f}%</small>
+                    <span class="pi-badge {badge_tone}" style="margin-left:6px;">{html.escape(status_ko)} {html.escape(drift_text)}</span>
+                </div>
             </div>
             """
         )
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>배분 이탈</span><b>현재 vs 목표</b></div>
-            {''.join(rows) if rows else '<div class="thesis">배분 데이터가 없습니다.</div>'}
+    return f"""
+        <div class="pi-card">
+            <div class="pi-card-header">
+                <strong>배분 이탈</strong>
+                <span class="pi-badge info">현재 vs 목표</span>
+            </div>
+            <div class="pi-card-body">
+                {''.join(rows) if rows else '<div class="thesis">배분 데이터가 없습니다.</div>'}
+            </div>
         </div>
         """
-    )
 
 
-def render_rebalance_candidates_card(suggestions: list[dict[str, Any]]) -> None:
+def render_allocation_drift_card(drift: dict[str, dict[str, Any]]) -> None:
+    st.html(allocation_drift_card_html(drift))
+
+
+def rebalance_candidates_card_html(suggestions: list[dict[str, Any]]) -> str:
     if not suggestions:
-        body = '<div class="thesis">목표 비중 대비 큰 이탈이 없어 리밸런싱 후보가 없습니다.</div>'
+        body = '<div class="pi-rebalance-item"><div class="pi-rebalance-top"><div class="pi-rebalance-asset">목표 근접</div><span class="pi-badge good">검토 유지</span></div><div class="pi-rebalance-reason">목표 비중 대비 큰 이탈이 없어 리밸런싱 후보가 없습니다.</div></div>'
     else:
         body = "".join(
             f"""
-            <div class="rank-row">
-                <div class="rank-name"><strong>{html.escape(ASSET_CLASS_LABELS.get(str(item.get("assetClass")), str(item.get("assetClass"))))}</strong><span>{html.escape(str(item.get("reason", "")))}</span></div>
-                <div class="row-value">{html.escape(str(item.get("action", "")))}</div>
-                <div class="row-value">{portfolio_format_currency(item.get("suggestedAmount"))}</div>
+            <div class="pi-rebalance-item">
+                <div class="pi-rebalance-top">
+                    <div class="pi-rebalance-asset">{html.escape(ASSET_CLASS_LABELS.get(str(item.get("assetClass")), str(item.get("assetClass"))))}</div>
+                    <span class="pi-badge {'warn' if safe_float(item.get("drift")) and safe_float(item.get("drift")) > 0 else 'info'}">{html.escape(str(item.get("action", "")))}</span>
+                </div>
+                <div class="pi-rebalance-reason">{html.escape(str(item.get("reason", "")))}</div>
+                <div class="pi-rebalance-bottom" style="margin-top:9px;">
+                    <div class="pi-rebalance-impact">{html.escape(str(item.get("impact", "목표 배분과 변동성 균형을 점검합니다.")))}</div>
+                    <div class="pi-rebalance-amount">{html.escape(portfolio_format_currency(item.get("suggestedAmount")))}</div>
+                </div>
             </div>
             """
             for item in suggestions[:5]
         )
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>리밸런싱 후보</span><b>주문 아님</b></div>
-            {body}
+    return f"""
+        <div class="pi-card">
+            <div class="pi-card-header">
+                <strong>리밸런싱 후보</strong>
+                <span class="pi-badge warn">주문 아님</span>
+            </div>
+            <div class="pi-card-body">
+                <div class="pi-rebalance-list">{body}</div>
+            </div>
         </div>
         """
-    )
 
 
-def render_risk_return_panel(metrics: dict[str, Any]) -> None:
-    rows = [
-        ("CAGR", portfolio_format_percent(metrics.get("cagr"))),
-        ("기간 수익률", portfolio_format_percent(metrics.get("periodReturn"), signed=True)),
-        ("연율 변동성", portfolio_format_percent(metrics.get("volatility"))),
-        ("Sharpe", "N/A" if metrics.get("sharpe") is None else f"{metrics.get('sharpe'):.2f}"),
-        ("최대 낙폭", portfolio_format_percent(metrics.get("maxDrawdown"))),
-        ("Beta", "N/A" if metrics.get("beta") is None else f"{metrics.get('beta'):.2f}"),
+def render_rebalance_candidates_card(suggestions: list[dict[str, Any]]) -> None:
+    st.html(rebalance_candidates_card_html(suggestions))
+
+
+def _pi_metric_tile_html(label: str, value: str, helper: str, tone: str) -> str:
+    tone_class = "pi-tone-good" if tone == "good" else "pi-tone-risk" if tone == "risk" else "pi-tone-warn" if tone == "warn" else "pi-tone-info"
+    return f"""
+        <div class="pi-metric-tile {tone_class}" role="group" aria-label="{html.escape(label)} {html.escape(value)}">
+            <div class="pi-metric-label">{html.escape(label)}</div>
+            <div class="pi-metric-value">{html.escape(value)}</div>
+            <div class="pi-metric-helper">{html.escape(helper)}</div>
+        </div>
+    """
+
+
+def risk_return_panel_html(metrics: dict[str, Any], benchmark_excess: Any = None) -> str:
+    volatility = safe_float(metrics.get("volatility"))
+    sharpe = safe_float(metrics.get("sharpe"))
+    max_drawdown = safe_float(metrics.get("maxDrawdown"))
+    beta = safe_float(metrics.get("beta"))
+    period_return = safe_float(metrics.get("periodReturn"))
+    cagr = safe_float(metrics.get("cagr"))
+    benchmark_value = portfolio_format_percent(benchmark_excess, signed=True)
+    benchmark_tone = "pi-value-good" if (safe_float(benchmark_excess) or 0) > 0 else "pi-value-risk" if (safe_float(benchmark_excess) or 0) < 0 else "pi-value-info"
+    metric_specs = [
+        ("CAGR", portfolio_format_percent(cagr), "연복리 성장률", "good" if cagr is not None and cagr > 0.06 else "info"),
+        ("기간 수익률", portfolio_format_percent(period_return, signed=True), "선택 기간 누적", "good" if period_return is not None and period_return > 0 else "risk" if period_return is not None and period_return < 0 else "info"),
+        ("연율 변동성", portfolio_format_percent(volatility), "변동성 높음" if volatility is not None and volatility >= 0.25 else "변동성 점검", "risk" if volatility is not None and volatility >= 0.40 else "warn" if volatility is not None and volatility >= 0.25 else "info"),
+        ("Sharpe", "N/A" if sharpe is None else f"{sharpe:.2f}", "위험 대비 효율 낮음" if sharpe is not None and sharpe < 0.5 else "위험조정 효율", "warn" if sharpe is None or sharpe < 0.5 else "good"),
+        ("최대 낙폭", portfolio_format_percent(max_drawdown), "고점 대비 낙폭", "risk" if max_drawdown is not None and max_drawdown < -0.10 else "info"),
+        ("Beta", "N/A" if beta is None else f"{beta:.2f}", "시장 민감도 높음" if beta is not None and beta > 1.2 else "시장 민감도", "warn" if beta is not None and beta > 1.2 else "info"),
     ]
-    row_html = "".join(
-        f"""
-        <div class="signal-row">
-            <div class="row-label">{html.escape(label)}</div>
-            <div class="row-value">{html.escape(value)}</div>
+    tiles = "".join(_pi_metric_tile_html(label, value, helper, tone) for label, value, helper, tone in metric_specs)
+    return f"""
+        <div class="pi-card pi-risk-card">
+            <div class="pi-card-header">
+                <strong>Risk & Return</strong>
+                <span class="pi-badge info">검토 지표</span>
+            </div>
+            <div class="pi-card-body">
+                <div class="pi-card-subtitle">수익률·변동성·위험조정 효율</div>
+                <div class="pi-metric-grid">{tiles}</div>
+                <div class="pi-benchmark-strip">
+                    <span>벤치마크 대비 기간 초과수익</span>
+                    <strong class="{benchmark_tone}">{html.escape(benchmark_value)}</strong>
+                </div>
+            </div>
         </div>
-        """
-        for label, value in rows
-    )
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>Risk & Return</span><b>검토 지표</b></div>
-            {row_html}
-        </div>
-        """
-    )
+    """
 
 
-def render_insight_engine_card(insights: list[dict[str, str]]) -> None:
-    body = "".join(
-        f"""
-        <div class="thesis">
-            <strong>{html.escape(str(item.get("observation", "")))}</strong><br/>
-            {html.escape(str(item.get("whyItMatters", "")))}<br/>
-            후보 행동: {html.escape(str(item.get("candidateAction", "")))}
-        </div>
-        """
-        for item in insights[:3]
-    )
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>Insight Engine</span><b>규칙 기반</b></div>
-            {body if body else '<div class="thesis">생성된 인사이트가 없습니다.</div>'}
-        </div>
-        """
-    )
+def render_risk_return_panel(metrics: dict[str, Any], benchmark_excess: Any = None) -> None:
+    st.html(risk_return_panel_html(metrics, benchmark_excess))
 
 
-def render_concentration_card(holdings: list[Any], concentration: dict[str, Any]) -> None:
+def _insight_value(item: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return ""
+
+
+def insight_engine_card_html(insights: list[dict[str, str]], metrics: dict[str, Any] | None = None) -> str:
+    metrics = metrics or {}
+    observation = ""
+    candidate_action = ""
+    why_text = ""
+    for item in insights:
+        text = _insight_value(item, "observation")
+        if "위험 대비 수익 효율" in text:
+            observation = text
+            why_text = _insight_value(item, "whyItMatters", "why")
+        if "오늘의 실행 후보" in text:
+            candidate_action = text
+    if not observation and insights:
+        observation = _insight_value(insights[0], "observation") or "검토 가능한 인사이트가 없습니다."
+        why_text = _insight_value(insights[0], "whyItMatters", "why")
+    if not candidate_action:
+        for item in insights:
+            candidate = _insight_value(item, "candidateAction", "candidate")
+            if candidate:
+                candidate_action = candidate
+                break
+    if not candidate_action:
+        candidate_action = "오늘의 실행 후보는 리밸런싱과 위험 축소 관점에서 선별됩니다."
+
+    sharpe_value = safe_float(metrics.get("sharpe"))
+    beta_value = safe_float(metrics.get("beta"))
+    sharpe_text = "N/A" if sharpe_value is None else f"{sharpe_value:.2f}"
+    beta_text = "N/A" if beta_value is None else f"{beta_value:.2f}"
+    evidence = [
+        f"Sharpe {sharpe_text}",
+        f"연율 변동성 {portfolio_format_percent(metrics.get('volatility'))}",
+        f"Beta {beta_text}",
+    ]
+    if why_text:
+        evidence.append(why_text)
+    return f"""
+        <div class="pi-card pi-insight-card">
+            <div class="pi-card-header">
+                <strong>Insight Engine</strong>
+                <span class="pi-badge info">규칙 기반</span>
+            </div>
+            <div class="pi-card-body">
+                <div class="pi-insight-stack">
+                    <div class="pi-insight-block">
+                        <div class="pi-insight-label">관찰</div>
+                        <div class="pi-insight-text">{html.escape(observation)}</div>
+                    </div>
+                    <div class="pi-insight-block">
+                        <div class="pi-insight-label">근거</div>
+                        <div class="pi-insight-text muted">{html.escape(' · '.join(evidence))}</div>
+                    </div>
+                    <div class="pi-insight-block action">
+                        <div class="pi-insight-label">후보 행동</div>
+                        <div class="pi-insight-text">{html.escape(candidate_action)}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    """
+
+
+def render_insight_engine_card(insights: list[dict[str, str]], metrics: dict[str, Any] | None = None) -> None:
+    st.html(insight_engine_card_html(insights, metrics))
+
+
+def concentration_card_html(holdings: list[Any], concentration: dict[str, Any]) -> str:
     top = sorted(holdings or [], key=lambda h: (safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0), reverse=True)[:5]
     total = sum((safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0) for h in holdings or [])
     rows = []
-    for h in top:
+    for idx, h in enumerate(top, 1):
         value = (safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0)
         weight = value / total if total > 0 else 0.0
+        color = "#ef4444" if weight >= 0.20 else "#f59e0b" if weight >= 0.10 else "#8b5cf6"
         rows.append(
             f"""
-            <div class="signal-row">
-                <div class="row-label">{html.escape(str(getattr(h, "symbol", "")))}</div>
-                <div class="mini-track"><div class="mini-fill" style="width:{max(2, min(100, weight * 100)):.1f}%; background:#a78bfa;"></div></div>
-                <div class="row-value">{weight * 100:.1f}%</div>
+            <div class="pi-holding-row">
+                <div class="pi-holding-rank">{idx}</div>
+                <div>
+                    <div class="pi-holding-symbol">{html.escape(str(getattr(h, "symbol", "")))}</div>
+                    <div class="pi-holding-name">{html.escape(str(getattr(h, "name", "")))}</div>
+                </div>
+                <div class="pi-holding-track" aria-label="{html.escape(str(getattr(h, "symbol", "")))} 비중 {weight * 100:.1f}%">
+                    <div class="pi-holding-fill" style="width:{max(2, min(100, weight * 100)):.1f}%; background:{color};"></div>
+                </div>
+                <div class="pi-holding-weight">{weight * 100:.1f}%</div>
             </div>
             """
         )
     level = str(concentration.get("level", "Low"))
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>집중도 위험</span><b>{html.escape(level)}</b></div>
-            {''.join(rows) if rows else '<div class="thesis">보유종목 데이터가 없습니다.</div>'}
-            <div class="small-note">Top weight {portfolio_format_percent(concentration.get("topHoldingWeight"))} · HHI {"N/A" if concentration.get("herfindahlIndex") is None else f"{concentration.get('herfindahlIndex'):.3f}"}</div>
+    level_tone = "risk" if level == "High" else "warn" if level == "Medium" else "good"
+    top_weight = portfolio_format_percent(concentration.get("topHoldingWeight"))
+    hhi = "N/A" if concentration.get("herfindahlIndex") is None else f"{concentration.get('herfindahlIndex'):.3f}"
+    return f"""
+        <div class="pi-card pi-concentration-card">
+            <div class="pi-card-header">
+                <strong>집중도 위험</strong>
+                <span class="pi-badge {level_tone}">{html.escape(level)}</span>
+            </div>
+            <div class="pi-card-body">
+                <div class="pi-holding-list">{''.join(rows) if rows else '<div class="thesis">보유종목 데이터가 없습니다.</div>'}</div>
+                <div class="pi-concentration-footer">
+                    Top weight {html.escape(top_weight)} · HHI {html.escape(hhi)}<br/>
+                    상위 보유 비중과 HHI 기준 집중도 점검 필요
+                </div>
+            </div>
         </div>
-        """
-    )
+    """
+
+
+def render_concentration_card(holdings: list[Any], concentration: dict[str, Any]) -> None:
+    st.html(concentration_card_html(holdings, concentration))
 
 
 def _holding_stock_signals(holdings: list[Any], snapshot: dict[str, Snapshot]) -> list[Any]:
@@ -4613,28 +5662,44 @@ def _holding_stock_signals(holdings: list[Any], snapshot: dict[str, Snapshot]) -
     return items
 
 
-def render_watchlist_signals_card(signals: list[dict[str, Any]]) -> None:
+def watchlist_signals_card_html(signals: list[dict[str, Any]]) -> str:
     rows = []
     for item in signals[:6]:
         raw_reasons = item.get("signals") or item.get("reasons") or []
-        reasons = " / ".join(str(reason) for reason in raw_reasons[:2]) if raw_reasons else "추세 데이터 부족"
+        reasons = " / ".join(str(reason) for reason in raw_reasons[:2]) if raw_reasons else "뚜렷한 우위 신호 없음"
+        change = safe_float(item.get("changePercent"))
+        tone_class = "pi-value-good" if change is not None and change > 0 else "pi-value-risk" if change is not None and change < 0 else "pi-value-info"
         rows.append(
             f"""
-            <div class="rank-row">
-                <div class="rank-name"><strong>{html.escape(str(item.get("symbol", "")))}</strong><span>{html.escape(str(item.get("name", "")))}</span></div>
-                <div class="row-value" style="color:{insight_color(item.get("changePercent"))};">{portfolio_format_percent(item.get("changePercent"), signed=True)}</div>
-                <div class="row-value">{html.escape(reasons)}</div>
+            <div class="pi-signal-row">
+                <div class="pi-signal-code">{html.escape(str(item.get("symbol", "")))}</div>
+                <div class="pi-signal-name">{html.escape(str(item.get("name", "")))}</div>
+                <div class="pi-signal-change {tone_class}">{portfolio_format_percent(change, signed=True)}</div>
+                <div class="pi-signal-badge" title="{html.escape(reasons)}">{html.escape(reasons)}</div>
             </div>
             """
         )
-    st.html(
-        f"""
-        <div class="portfolio-card">
-            <div class="portfolio-head"><span>보유/관심 신호</span><b>추세 확인</b></div>
-            {''.join(rows) if rows else '<div class="thesis">신호 데이터가 없습니다.</div>'}
+    return f"""
+        <div class="pi-card pi-signals-card">
+            <div class="pi-card-header">
+                <strong>보유/관심 신호</strong>
+                <span class="pi-badge info">추세 확인</span>
+            </div>
+            <div class="pi-card-body">
+                <div class="pi-signal-header">
+                    <span>코드</span>
+                    <span>종목</span>
+                    <span style="text-align:right;">변화율</span>
+                    <span>신호</span>
+                </div>
+                <div class="pi-signal-list">{''.join(rows) if rows else '<div class="thesis">신호 데이터가 없습니다.</div>'}</div>
+            </div>
         </div>
-        """
-    )
+    """
+
+
+def render_watchlist_signals_card(signals: list[dict[str, Any]]) -> None:
+    st.html(watchlist_signals_card_html(signals))
 
 
 def render_portfolio_intelligence_section(
@@ -4686,41 +5751,64 @@ def render_portfolio_intelligence_section(
     watchlist_items = _holding_stock_signals(holdings, snapshot) or getWatchlist()
     watchlist_signals = generateWatchlistSignals(watchlist_items)
 
-    st.markdown('<div class="section-title">Portfolio Intelligence</div>', unsafe_allow_html=True)
+    parse_notice = ""
     if parse_errors:
-        st.caption("포트폴리오 입력 확인: " + " / ".join(parse_errors[:2]))
+        parse_notice = f"<span class='pi-badge warn'>{html.escape('입력 확인: ' + ' / '.join(parse_errors[:2]))}</span>"
+    st.html(
+        f"""
+        <section class="portfolio-intelligence-shell" aria-label="Portfolio Intelligence">
+            <div class="portfolio-intelligence-title">
+                <div>
+                    <strong>Portfolio Intelligence</strong>
+                    <span>위험, 배분 이탈, 리밸런싱 후보를 한 화면에서 점검합니다.</span>
+                </div>
+                <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+                    {parse_notice}
+                    <span class="pi-badge info">Decision Support</span>
+                </div>
+            </div>
+            <div class="portfolio-intelligence-grid">
+                {portfolio_health_card_html(health_score, health_label, health_reasons, health_color)}
+                {allocation_drift_card_html(drift)}
+                {rebalance_candidates_card_html(suggestions)}
+            </div>
+        </section>
+        """
+    )
 
-    col_a, col_b, col_c = st.columns([1.0, 1.35, 1.0])
-    with col_a:
-        render_portfolio_health_card(health_score, health_label, health_reasons, health_color)
-    with col_b:
-        render_allocation_drift_card(drift)
-    with col_c:
-        render_rebalance_candidates_card(suggestions)
+    portfolio_metrics = {
+        "cagr": cagr,
+        "periodReturn": _series_return(filtered_points),
+        "volatility": volatility,
+        "sharpe": sharpe,
+        "maxDrawdown": max_drawdown,
+        "beta": beta,
+    }
+    st.html(
+        f"""
+        <section class="portfolio-intelligence-shell" aria-label="Portfolio Intelligence Details">
+            <div class="portfolio-intelligence-title">
+                <div>
+                    <strong>Risk, Signals & Insight</strong>
+                    <span>수익·위험·집중도·보유 신호를 검토 후보 관점으로 정리합니다.</span>
+                </div>
+                <span class="pi-badge warn">리스크 확인</span>
+            </div>
+            <div class="pi-detail-grid">
+                {risk_return_panel_html(portfolio_metrics, relative_return)}
+                {concentration_card_html(holdings, concentration)}
+                {insight_engine_card_html(insights, portfolio_metrics)}
+                {watchlist_signals_card_html(watchlist_signals)}
+            </div>
+        </section>
+        """
+    )
 
-    col_d, col_e = st.columns([1.05, 1.15])
-    with col_d:
-        render_risk_return_panel(
-            {
-                "cagr": cagr,
-                "periodReturn": _series_return(filtered_points),
-                "volatility": volatility,
-                "sharpe": sharpe,
-                "maxDrawdown": max_drawdown,
-                "beta": beta,
-            }
-        )
-        render_concentration_card(holdings, concentration)
-    with col_e:
+    col_chart_a, col_chart_b = st.columns([1.1, 1.0])
+    with col_chart_a:
         st.pyplot(plot_portfolio_value_chart(filtered_points, benchmark_points), clear_figure=True)
+    with col_chart_b:
         st.pyplot(plot_portfolio_drawdown_chart(calculateDrawdownSeries(filtered_points)), clear_figure=True)
-        st.caption(f"벤치마크 대비 기간 초과수익: {portfolio_format_percent(relative_return, signed=True)}")
-
-    col_f, col_g = st.columns([1.2, 1.0])
-    with col_f:
-        render_watchlist_signals_card(watchlist_signals)
-    with col_g:
-        render_insight_engine_card(insights)
 
 
 def _korea_grade_color(grade: str) -> str:
@@ -4915,8 +6003,48 @@ def _korea_widget_key(prefix: str, *parts: Any) -> str:
     return "korea_" + hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
+def _korea_display_label(text: Any) -> str:
+    raw = str(text or "").strip()
+    lower = raw.lower()
+    mapped = {
+        "positive": korea_format_direction(raw),
+        "neutral": korea_format_direction(raw),
+        "negative": korea_format_direction(raw),
+        "mixed": korea_format_direction(raw),
+        "low": korea_format_severity(raw),
+        "medium": korea_format_severity(raw),
+        "high": korea_format_severity(raw),
+        "critical": korea_format_severity(raw),
+        "panic": korea_format_regime(raw),
+        "risk_off": korea_format_regime(raw),
+        "risk_on": korea_format_regime(raw),
+        "active": "활성",
+        "waiting": "대기",
+        "pending": "대기",
+        "normal": "정상",
+        "no data": "데이터 부족",
+        "mock data": "Mock data",
+    }.get(lower)
+    return mapped if mapped is not None else (raw or "-")
+
+
+def _korea_tone_for_value(value: Any, default: str = "muted") -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"positive", "통과", "정상", "사용 가능", "검토 후보", "강한 검토 후보", "low"}:
+        return "good"
+    if raw in {"negative", "high", "critical", "panic", "방어 우선", "활성", "제외 후보", "리스크 관리"}:
+        return "risk"
+    if raw in {"medium", "주의", "보수 검토", "검증 중", "기록 대기", "대기"}:
+        return "warn"
+    if raw in {"neutral", "mixed", "중립", "관찰 후보", "비중 보강 검토", "낮음"}:
+        return "info"
+    return default
+
+
 def _korea_badge(text: str, tone: str = "muted") -> _HtmlCell:
-    return _HtmlCell(f'<span class="korea-badge {html.escape(tone)}">{html.escape(str(text))}</span>')
+    label = _korea_display_label(text)
+    resolved_tone = tone if tone != "auto" else _korea_tone_for_value(text)
+    return _HtmlCell(f'<span class="korea-badge {html.escape(resolved_tone)}">{html.escape(label)}</span>')
 
 
 def _korea_evidence(text: str) -> _HtmlCell:
@@ -4928,13 +6056,20 @@ def _korea_factor_cell(value: Any) -> _HtmlCell:
     number = safe_float(value)
     score = "-" if number is None else f"{number:.0f}"
     return _HtmlCell(
-        f'<span class="korea-heat {html.escape(bucket["class"])}">{score}<small>{html.escape(bucket["label"])}</small></span>'
+        f'<span class="korea-heat {html.escape(bucket["class"])}"><strong>{score}</strong><small>{html.escape(bucket["label"])}</small></span>'
     )
 
 
 def _safe_sharpe_text(value: Any) -> str:
     number = safe_float(value)
-    return "-" if number is None else f"{number:.2f}"
+    if number is None:
+        return "-"
+    number = korea_normalize_negative_zero(number) or 0.0
+    return f"{number:.2f}"
+
+
+def _korea_percent_text(value: Any, signed: bool = False, digits: int = 1) -> str:
+    return korea_format_percent(korea_normalize_negative_zero(value), signed=signed, digits=digits)
 
 
 def _korea_module_title(title: str, subtitle: str = "", meta: str = "") -> None:
@@ -4972,6 +6107,96 @@ def _korea_metric_html(label: str, value: str, tone: str = "") -> str:
     """
 
 
+def _korea_metric_card_html(label: str, value: str, tone: str = "", detail: str = "") -> str:
+    tone_class = {
+        "good": "tone-good",
+        "info": "tone-info",
+        "warn": "tone-warn",
+        "risk": "tone-risk",
+    }.get(tone, "")
+    detail_html = f"<span>{html.escape(detail)}</span>" if detail else ""
+    return f"""
+    <div class="korea-metric-card">
+        <small>{html.escape(label)}</small>
+        <strong class="{tone_class}">{html.escape(str(value))}</strong>
+        {detail_html}
+    </div>
+    """
+
+
+def _korea_flow_cell(value: Any) -> _HtmlCell:
+    number = safe_float(value)
+    if number is None:
+        return _HtmlCell('<span class="korea-flow-flat">-</span>')
+    css_class = "korea-flow-pos" if number > 0 else "korea-flow-neg" if number < 0 else "korea-flow-flat"
+    return _HtmlCell(f'<span class="{css_class}">{html.escape(korea_format_trading_value(number))}</span>')
+
+
+def _korea_flow_signal(value: Any, positive: str, negative: str, neutral: str = "중립") -> _HtmlCell:
+    number = safe_float(value)
+    if number is None or abs(number) < 1:
+        return _korea_badge(neutral, "muted")
+    return _korea_badge(positive if number > 0 else negative, "good" if number > 0 else "warn")
+
+
+def _korea_module_health_html(module_key: str, active: bool, contribution: str, updated_at: str = "-") -> str:
+    status = "active" if active else "no data"
+    tone = "good" if active else "muted"
+    return f"""
+    <div class="korea-module-health">
+        <strong>{html.escape(formatModuleLabel(module_key))}</strong>
+        <div>{_korea_badge('사용 가능' if active else '데이터 부족', tone)}</div>
+        <span>{html.escape(contribution)}<br/>업데이트: {html.escape(updated_at or '-')}</span>
+    </div>
+    """
+
+
+def _fear_greed_segment_label(score: float | None) -> str:
+    if score is None:
+        return "데이터 부족"
+    if score <= 20:
+        return "0-20 극단적 공포"
+    if score <= 40:
+        return "21-40 공포"
+    if score <= 60:
+        return "41-60 중립"
+    if score <= 80:
+        return "61-80 탐욕"
+    return "81-100 극단적 탐욕"
+
+
+def render_fear_greed_visibility_gauge(score: float | None, label: str, color: str, advice: str) -> None:
+    score_text = "N/A" if score is None else f"{max(0, min(100, score)):.0f}"
+    impact_note = (
+        "데이터 확인 전까지 보수적으로 해석합니다."
+        if score is None
+        else "공포 구간: 리스크 관리 우선"
+        if score <= 40
+        else "탐욕 구간: 과열 주의"
+        if score >= 61
+        else "중립 구간: 선별 검토"
+    )
+    st.html(
+        f"""
+        <div class="fear-greed-gauge">
+            <div class="fear-greed-value">
+                <strong style="color:{html.escape(color)};">{html.escape(score_text)}</strong>
+                <span>/100 · {html.escape(label)} · {html.escape(_fear_greed_segment_label(score))}</span>
+            </div>
+            <div class="fear-greed-segments" aria-label="공포 탐욕 구간">
+                <span class="fg-extreme-fear" title="0-20 극단적 공포"></span>
+                <span class="fg-fear" title="21-40 공포"></span>
+                <span class="fg-neutral" title="41-60 중립"></span>
+                <span class="fg-greed" title="61-80 탐욕"></span>
+                <span class="fg-extreme-greed" title="81-100 극단적 탐욕"></span>
+            </div>
+            <div class="korea-card-subtitle">0에 가까울수록 공포, 100에 가까울수록 탐욕입니다. 극단 구간에서는 추세 추종보다 리스크 관리가 우선입니다.</div>
+            <div class="korea-card-subtitle" style="margin-top:7px;"><b>{html.escape(impact_note)}</b> · {html.escape(advice)}</div>
+        </div>
+        """
+    )
+
+
 def _korea_table_html(rows: list[dict[str, Any]], columns: list[str] | None = None) -> str:
     if not rows:
         return _korea_empty_html("표시할 데이터가 없습니다.", "데이터 공급원 또는 필터 조건을 확인하세요.")
@@ -4982,7 +6207,13 @@ def _korea_table_html(rows: list[dict[str, Any]], columns: list[str] | None = No
         cells = []
         for col in columns:
             value = row.get(col, "-")
-            cells.append(f"<td>{value if isinstance(value, _HtmlCell) else html.escape(str(value))}</td>")
+            css = "text"
+            if any(token in str(col) for token in ["점수", "수익", "위험", "비중", "금액", "수량", "승률", "성과", "낙폭", "CAGR", "MDD", "Sharpe", "Rank", "IC", "P@10", "20D", "외국인", "기관", "연기금", "합산", "중요도", "신뢰도"]):
+                css = "num"
+            if isinstance(value, _HtmlCell):
+                cells.append(f'<td class="{css}">{value}</td>')
+            else:
+                cells.append(f'<td class="{css}">{html.escape(str(value))}</td>')
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
     return f"""
     <div class="korea-table-wrap">
@@ -5226,10 +6457,50 @@ def render_korea_recommendation_table(scores: list[Any]) -> None:
         active_score = next((row for row in scores if getattr(row, "code", "") == context.selectedStockCode), scores[0])
         active_code = str(getattr(active_score, "code", "") or "")
         active_name = str(getattr(active_score, "name", "") or active_code)
+        active_grade = str(getattr(active_score, "recommendation_grade", "NEUTRAL") or "NEUTRAL")
+        active_score_value = safe_float(getattr(active_score, "total_score", None)) or 0.0
+        active_confidence = safe_float(getattr(active_score, "confidence", None))
+        expected_return = safe_float(getattr(active_score, "expected_return_3m", None))
+        downside_risk = safe_float(getattr(active_score, "downside_risk", None))
+        positive_preview = " / ".join(list(getattr(active_score, "positive_reasons", []) or [])[:2]) or "긍정 근거 데이터 부족"
+        negative_preview = " / ".join(list(getattr(active_score, "negative_reasons", []) or [])[:2]) or "뚜렷한 반대 근거 없음"
+        risk_preview = ", ".join(list(getattr(active_score, "risk_flags", []) or [])[:2]) or "주요 리스크 플래그 없음"
         stock_cols = st.columns(min(4, len(scores[:4])))
         for idx, score in enumerate(scores[:4]):
             with stock_cols[idx % len(stock_cols)]:
                 render_linked_stock_button(str(getattr(score, "code", "") or ""), str(getattr(score, "name", "") or getattr(score, "code", "")), "investmentAlgorithm", korea_format_score(getattr(score, "total_score", None)))
+        st.html(
+            f"""
+            <div class="korea-decision-card">
+                <div class="korea-score-hero">
+                    <span>{html.escape(active_name)} ({html.escape(active_code)})</span>
+                    <strong>{active_score_value:.0f}</strong>
+                    <span>/100 · 총점</span>
+                    <div class="portfolio-progress" aria-label="총점 진행률"><div class="portfolio-progress-fill" style="width:{max(0, min(100, active_score_value)):.0f}%;"></div></div>
+                    {_korea_badge(korea_format_grade(active_grade), _korea_grade_badge_class(active_grade))}
+                </div>
+                <div>
+                    <div class="korea-card-head" style="border-bottom:0; margin-bottom:8px;">
+                        <div>
+                            <div class="korea-card-title">한국주식 팩터·수급·공시·리스크 기반 검토 결과</div>
+                            <div class="korea-card-subtitle">확정 지시가 아니라 검토 우선순위입니다. 점수와 하방위험을 함께 확인합니다.</div>
+                        </div>
+                    </div>
+                    <div class="korea-hero-metrics">
+                        {_korea_metric_card_html("신뢰도", korea_format_confidence(active_confidence), "warn", "중립·검증 필요")}
+                        {_korea_metric_card_html("3M 기대수익", korea_format_percent(expected_return, signed=True), "good" if (expected_return or 0) > 0 else "muted", "비용 전 추정")}
+                        {_korea_metric_card_html("하방위험", korea_format_percent(downside_risk), "risk", "손실 제한 기준")}
+                        {_korea_metric_card_html("검토비중", korea_format_percent(getattr(active_score, "suggested_weight", None)), "info", "상한 확인")}
+                    </div>
+                    <div class="thesis" style="background:rgba(2,6,23,.24); border-color:rgba(196,181,253,.18); color:#dbeafe;">
+                        <b>긍정 근거</b> {html.escape(positive_preview)}<br/>
+                        <b>반대 근거</b> {html.escape(negative_preview)}<br/>
+                        <b>리스크 확인</b> {html.escape(risk_preview)}
+                    </div>
+                </div>
+            </div>
+            """
+        )
         metric_cols = st.columns(5)
         metric_specs = [
             ("총점", korea_format_score(getattr(active_score, "total_score", None)), "totalScore"),
@@ -5266,14 +6537,22 @@ def render_korea_signal_breakdown(scores: list[Any]) -> None:
 def render_korea_factor_heatmap(scores: list[Any]) -> None:
     render_module_anchor("factorHeatmap")
     _korea_module_title("팩터 히트맵", "종목별 강점과 약점을 같은 색상 기준으로 비교합니다.")
-    for score in scores[:4]:
-        code = str(getattr(score, "code", "") or "")
-        name = str(getattr(score, "name", "") or code)
-        render_linked_stock_button(code, name, "factorHeatmap", korea_format_score(getattr(score, "total_score", None)))
-        cols = st.columns(3)
-        for idx, (label, factor_key, value) in enumerate(_korea_factor_items(score)):
-            with cols[idx % 3]:
-                render_linked_factor_button(label, factor_key, value, "factorHeatmap", code, name, key_scope="heat")
+    st.html(
+        """
+        <div class="korea-legend" aria-label="팩터 히트맵 범례">
+            <span>취약 0-29</span><span>약함 30-44</span><span>보통 45-59</span><span>양호 60-74</span><span>강함 75+</span>
+        </div>
+        """
+    )
+    with st.expander("팩터 설명 연결", expanded=False):
+        for score in scores[:4]:
+            code = str(getattr(score, "code", "") or "")
+            name = str(getattr(score, "name", "") or code)
+            render_linked_stock_button(code, name, "factorHeatmap", korea_format_score(getattr(score, "total_score", None)))
+            cols = st.columns(3)
+            for idx, (label, factor_key, value) in enumerate(_korea_factor_items(score)):
+                with cols[idx % 3]:
+                    render_linked_factor_button(label, factor_key, value, "factorHeatmap", code, name, key_scope="heat")
     rows = []
     for score in scores[:10]:
         row = {"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>")}
@@ -5295,8 +6574,16 @@ def render_korea_supply_demand_radar(scores: list[Any]) -> None:
         institution = sum(safe_float(getattr(row, "institution_net_buy", 0)) or 0 for row in last_20)
         pension = sum(safe_float(getattr(row, "pension_net_buy", 0)) or 0 for row in last_20)
         total = foreign + institution + pension
-        signal = "수급 개선" if total > 0 else "수급 약화"
-        rows.append({"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(code)}</span>"), "외국인 20D": korea_format_trading_value(foreign), "기관 20D": korea_format_trading_value(institution), "연기금 20D": korea_format_trading_value(pension), "합산": korea_format_trading_value(total), "신호": _korea_badge(signal, "good" if total > 0 else "warn")})
+        signal = "외국인·기관 합산 순매수" if total > 0 else "수급 약화"
+        rows.append({
+            "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(code)}</span>"),
+            "외국인 20D": _korea_flow_cell(foreign),
+            "기관 20D": _korea_flow_cell(institution),
+            "연기금 20D": _korea_flow_cell(pension),
+            "합산": _korea_flow_cell(total),
+            "신호": _korea_flow_signal(total, signal, "수급 약화"),
+            "해석": _korea_evidence("20거래일 누적 기준 · 순매수는 가격 지지 근거, 순매도는 추격 제한 근거"),
+        })
     st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
@@ -5304,6 +6591,7 @@ def render_korea_disclosure_radar(disclosures: list[Any]) -> None:
     render_module_anchor("disclosureRadar")
     _korea_module_title("공시·이벤트 레이더", "공시 리스크와 촉매를 신규 검토 전에 먼저 확인합니다.")
     rows = []
+    buttons: list[tuple[str, str, str, str]] = []
     context = _selected_context()
     for event in disclosures[:8]:
         event_id = str(getattr(event, "id", "") or f"{getattr(event, 'code', '')}-{getattr(event, 'date', '')}")
@@ -5311,20 +6599,31 @@ def render_korea_disclosure_radar(disclosures: list[Any]) -> None:
         title = str(getattr(event, "title", "") or getattr(event, "summary", "") or "공시 이벤트")
         sentiment = str(getattr(event, "sentiment", "") or "neutral")
         tone = "good" if sentiment == "positive" else "risk" if sentiment == "negative" else "muted"
-        if st.button(f"{getattr(event, 'date', '-')} · {code} · {title[:32]}", key=_korea_widget_key("disclosure", event_id), use_container_width=True):
-            update_korea_context(selectedStockCode=code, selectedDisclosureId=event_id, selectedMetric="disclosureScore", selectedModule="disclosureRadar", sourceModule="disclosureRadar")
-        rows.append({"일자": getattr(event, "date", ""), "종목": code, "분류": getattr(event, "category", ""), "감성": _korea_badge(sentiment, tone), "중요도": f"{getattr(event, 'importance', 0):.0f}", "요약": _korea_evidence(getattr(event, "summary", "") or title)})
+        buttons.append((event_id, code, title, str(getattr(event, "date", "-"))))
+        rows.append({
+            "일자": getattr(event, "date", ""),
+            "종목": code,
+            "분류": _korea_badge(getattr(event, "category", "") or "event", "info"),
+            "감성": _korea_badge(sentiment, tone),
+            "중요도": _HtmlCell(f"<span class='korea-os-score'>{safe_float(getattr(event, 'importance', None)) or 0:.0f}</span>"),
+            "요약": _korea_evidence(getattr(event, "summary", "") or title),
+        })
         if context.selectedDisclosureId == event_id:
             url = safe_external_url(getattr(event, "url", None))
-            st.html(f"<div class='korea-explanation-panel'><strong>{html.escape(title)}</strong><div class='korea-explain-muted'>일자 {html.escape(str(getattr(event, 'date', '-') or '-'))} · 종목 {html.escape(code)} · 중요도 {safe_float(getattr(event, 'importance', None)) or 0:.0f}</div><div class='korea-explain-muted' style='margin-top:8px;'>분류 {html.escape(str(getattr(event, 'category', '-') or '-'))} · 감성 {html.escape(sentiment)}</div></div>")
+            st.html(f"<div class='korea-explanation-panel'><strong>{html.escape(title)}</strong><div class='korea-explain-muted'>일자 {html.escape(str(getattr(event, 'date', '-') or '-'))} · 종목 {html.escape(code)} · 중요도 {safe_float(getattr(event, 'importance', None)) or 0:.0f}</div><div class='korea-explain-muted' style='margin-top:8px;'>분류 {html.escape(str(getattr(event, 'category', '-') or '-'))} · 감성 {html.escape(_korea_display_label(sentiment))}</div></div>")
             if url:
                 st.link_button("원문 보기", url, use_container_width=True)
     st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
+    with st.expander("공시 이벤트 연결", expanded=False):
+        for event_id, code, title, date_text in buttons:
+            if st.button(f"{date_text} · {code} · {title[:32]}", key=_korea_widget_key("disclosure", event_id), use_container_width=True):
+                update_korea_context(selectedStockCode=code, selectedDisclosureId=event_id, selectedMetric="disclosureScore", selectedModule="disclosureRadar", sourceModule="disclosureRadar")
 
 
 def render_korea_value_up_radar(candidates: list[Any]) -> None:
     render_module_anchor("valueUpRadar")
     _korea_module_title("밸류업 레이더", "저평가, 주주환원, 재무 안정성을 함께 보는 정책 수혜 후보입니다.")
+    st.html("<div class='korea-safety-callout' style='margin-bottom:10px;'>저평가 신호는 수익성 개선과 주주환원 확인 시 신뢰도가 높아집니다.</div>")
     rows = []
     for score in candidates[:8]:
         factors = _korea_factor_dict(score)
@@ -5335,15 +6634,21 @@ def render_korea_value_up_radar(candidates: list[Any]) -> None:
 def render_korea_backtest_accuracy_panel(backtest: Any) -> None:
     render_module_anchor("backtestAccuracy")
     _korea_module_title("예측 정확도·백테스트", "룰 기반 추정 성과입니다. 미래 수익을 보장하지 않으며 비용·슬리피지·세금 가정을 함께 봅니다.")
-    metric_specs = [("CAGR", korea_format_percent(getattr(backtest, "cagr", None)), "cagr"), ("초과수익", korea_format_percent(getattr(backtest, "excess_return", None), signed=True), "excessReturn"), ("MDD", korea_format_percent(getattr(backtest, "max_drawdown", None)), "mdd"), ("Sharpe", _safe_sharpe_text(getattr(backtest, "sharpe_ratio", None)), "sharpe"), ("P@10", korea_format_percent(getattr(backtest, "precision_at_top10", None)), "precisionAt10"), ("Rank IC", _safe_sharpe_text(getattr(backtest, "factor_rank_ic", None)), "rankIC")]
-    metric_cols = st.columns(3)
-    for idx, (label, value, metric_key) in enumerate(metric_specs):
-        with metric_cols[idx % 3]:
-            render_explainable_metric_button(label, value, metric_key, "backtestAccuracy", key_scope="backtest")
-    metric_html = "".join(_korea_metric_html(label, value, "warn" if label == "MDD" else "") for label, value, _ in metric_specs)
-    notes = "".join(f"<div class='portfolio-list-item'>{html.escape(str(note))}</div>" for note in getattr(backtest, "notes", [])[:3])
+    metric_specs = [("CAGR", _korea_percent_text(getattr(backtest, "cagr", None)), "cagr"), ("초과수익", _korea_percent_text(getattr(backtest, "excess_return", None), signed=True), "excessReturn"), ("MDD", _korea_percent_text(getattr(backtest, "max_drawdown", None)), "mdd"), ("Sharpe", _safe_sharpe_text(getattr(backtest, "sharpe_ratio", None)), "sharpe"), ("P@10", _korea_percent_text(getattr(backtest, "precision_at_top10", None)), "precisionAt10"), ("Rank IC", _safe_sharpe_text(getattr(backtest, "factor_rank_ic", None)), "rankIC")]
+    with st.expander("백테스트 지표 설명", expanded=False):
+        metric_cols = st.columns(3)
+        for idx, (label, value, metric_key) in enumerate(metric_specs):
+            with metric_cols[idx % 3]:
+                render_explainable_metric_button(label, value, metric_key, "backtestAccuracy", key_scope="backtest")
+    metric_html = "".join(_korea_metric_html(label, value, "warn" if label == "MDD" else "good" if label in {"CAGR", "초과수익"} else "") for label, value, _ in metric_specs)
+    notes = "".join(f"<span class='korea-badge muted' style='margin:4px 5px 0 0;'>{html.escape(str(note))}</span>" for note in getattr(backtest, "notes", [])[:3])
     subtitle = f"{getattr(backtest, 'strategy_name', '')} · {getattr(backtest, 'start_date', '')}~{getattr(backtest, 'end_date', '')}"
-    st.html(f'<div class="korea-card compact"><div class="korea-card-subtitle">{html.escape(subtitle)}</div><div class="korea-metric-grid">{metric_html}</div>{notes}</div>')
+    meta = (
+        f"검증 기간 {getattr(backtest, 'start_date', '-') or '-'}~{getattr(backtest, 'end_date', '-') or '-'} · "
+        f"유니버스 {getattr(backtest, 'universe', '한국 관심종목') or '한국 관심종목'} · "
+        f"거래비용 가정 포함"
+    )
+    st.html(f'<div class="korea-card compact"><div class="korea-card-title">{html.escape(subtitle)}</div><div class="korea-card-subtitle">{html.escape(meta)}</div><div class="korea-metric-grid">{metric_html}</div><div class="korea-safety-callout">{notes}<br/>과거 신호는 미래 성과를 보장하지 않습니다.</div></div>')
 
 
 def render_korea_portfolio_action_queue(scores: list[Any]) -> None:
@@ -5352,8 +6657,8 @@ def render_korea_portfolio_action_queue(scores: list[Any]) -> None:
     rows = []
     for score in scores[:10]:
         grade = getattr(score, "recommendation_grade", "NEUTRAL")
-        rows.append({"검토": _korea_badge(_korea_action_label(str(grade)), _korea_grade_badge_class(str(grade))), "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"), "등급": korea_format_grade(grade), "점수": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "최대비중": korea_format_percent(getattr(score, "max_suggested_weight", None)), "리스크": _korea_evidence(", ".join(getattr(score, "risk_flags", [])[:2]) or "중요 플래그 없음")})
-    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
+        rows.append({"검토": _korea_badge(_korea_action_label(str(grade)), _korea_grade_badge_class(str(grade))), "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"), "등급": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(str(grade))), "점수": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "최대비중": korea_format_percent(getattr(score, "max_suggested_weight", None)), "리스크": _korea_badge(", ".join(getattr(score, "risk_flags", [])[:2]) or "중요 플래그 없음", "good")})
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}<div class="korea-safety-callout">Mock mode: 공식 실시간 주문 기능은 제공하지 않습니다. 실제 매매 전 원천 데이터와 공시를 반드시 재확인하세요.</div></div>')
 
 
 def render_korea_advanced_module_summary(data: dict[str, Any], scores: list[Any]) -> None:
@@ -5365,102 +6670,362 @@ def render_korea_advanced_module_summary(data: dict[str, Any], scores: list[Any]
         with cols[idx % 3]:
             if st.button(f"{formatModuleLabel(module_key)} · {'사용 가능' if active else '데이터 부족'}", key=_korea_widget_key("module_summary", module_key), use_container_width=True, help=description):
                 update_korea_context(selectedModule=module_key, selectedMetric=MODULE_DEFAULT_METRIC.get(module_key), sourceModule="advancedModuleSummary")
+    module_status = {module_key: (active, description) for module_key, active, description in modules}
+    registry_cards = []
+    for item in KOREA_MODULE_VISUAL_REGISTRY:
+        module_key = item["key"]
+        if module_key not in MODULE_IDS:
+            continue
+        active, description = module_status.get(module_key, (bool(data.get("investmentOS")) if item["group"] == "Decision OS" else False, item["group"]))
+        registry_cards.append(_korea_module_health_html(module_key, active, description, str(data.get("generatedAt", "-") or "-")))
+    st.html(f'<div class="korea-card compact"><div class="korea-module-health-grid">{"".join(registry_cards)}</div></div>')
 
 
-def _render_os_rows(rows: list[dict[str, Any]], title: str, subtitle: str, module_key: str) -> None:
-    render_module_anchor(module_key)
-    _korea_module_title(title, subtitle)
-    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
+def _korea_os_card_html(title: str, subtitle: str, body: str, module_key: str, span: int = 6, badge: str = "") -> str:
+    anchor = MODULE_IDS.get(module_key, module_key)
+    badge_html = _korea_badge(badge, "auto") if badge else ""
+    return f"""
+    <article id="{html.escape(anchor)}" class="korea-os-card korea-os-span-{span}" aria-label="{html.escape(title)}">
+        <div class="korea-os-card-head">
+            <div>
+                <div class="korea-os-card-title">{html.escape(title)}</div>
+                <div class="korea-os-card-desc">{html.escape(subtitle)}</div>
+            </div>
+            {badge_html}
+        </div>
+        <div class="korea-os-card-body">{body}</div>
+    </article>
+    """
+
+
+def _korea_os_metric_html(label: str, value: str, tone: str = "", detail: str = "") -> str:
+    tone_class = {
+        "good": "tone-good",
+        "info": "tone-info",
+        "warn": "tone-warn",
+        "risk": "tone-risk",
+    }.get(tone, "")
+    detail_html = f"<div class='korea-os-muted'>{html.escape(detail)}</div>" if detail else ""
+    return f"""
+    <div class="korea-os-metric">
+        <small>{html.escape(label)}</small>
+        <strong class="{tone_class}">{html.escape(str(value))}</strong>
+        {detail_html}
+    </div>
+    """
+
+
+def _korea_os_direction_badge(direction: Any) -> _HtmlCell:
+    raw = str(direction or "neutral")
+    tone = "good" if raw == "positive" else "risk" if raw == "negative" else "warn" if raw == "mixed" else "info"
+    return _korea_badge(raw, tone)
+
+
+def korea_decision_flow_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for idx, item in enumerate(os_data.get("decisionFlow", []), 1):
+        evidence = " / ".join(getattr(item, "primary_evidence", [])[:2]) or getattr(item, "blocking_reason", "") or "-"
+        status = str(getattr(item, "status", "-") or "-")
+        action = str(getattr(item, "candidate_action", "관찰") or "관찰")
+        rows.append(
+            f"""
+            <div class="korea-os-step-row">
+                <div class="korea-os-step-num">{idx}</div>
+                <div>
+                    <div class="korea-os-label">{html.escape(str(getattr(item, "title", "-") or "-"))}</div>
+                    <div class="korea-os-muted">{html.escape(str(getattr(item, "id", "") or ""))}</div>
+                </div>
+                <div>{_korea_badge(status, _korea_tone_for_value(status, "warn"))}</div>
+                <div><span class="korea-os-score">{html.escape(korea_format_score(getattr(item, "score", None)))}</span></div>
+                <div>{_korea_badge(action, _korea_tone_for_value(action, "info"))}</div>
+                <div class="korea-os-reason" title="{html.escape(evidence)}">{html.escape(evidence)}</div>
+            </div>
+            """
+        )
+    body = "".join(rows) if rows else _korea_empty_html("의사결정 흐름 데이터가 없습니다.")
+    return _korea_os_card_html("의사결정 흐름", "시장→후보→리스크→검증→결론 순서로 보류 사유를 확인합니다.", body, "decisionFlow", 7, "검토 흐름")
+
+
+def korea_signal_conflict_matrix_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for item in os_data.get("signalConflicts", []):
+        conflict = getattr(item, "conflict_with", None) or "-"
+        if isinstance(conflict, (list, tuple)):
+            conflict_text = " / ".join(str(v) for v in conflict[:2])
+            if len(conflict) > 2:
+                conflict_text += f" +{len(conflict) - 2}"
+        else:
+            conflict_text = str(conflict)
+        strength = safe_float(getattr(item, "strength", None))
+        bar_width = 0 if strength is None else max(2, min(100, strength))
+        strength_cell = _HtmlCell(
+            f"<span class='korea-os-score'>{html.escape(korea_format_score(strength))}</span>"
+            f"<div class='portfolio-progress' style='height:6px; margin:6px 0 0;'><div class='portfolio-progress-fill' style='width:{bar_width:.0f}%;'></div></div>"
+        )
+        rows.append({
+            "신호": getattr(item, "signal", "-"),
+            "방향": _korea_os_direction_badge(getattr(item, "direction", "neutral")),
+            "강도": strength_cell,
+            "충돌": _korea_badge(conflict_text, "muted") if conflict_text != "-" else _HtmlCell("<span class='korea-os-muted'>-</span>"),
+            "근거": _korea_evidence(getattr(item, "evidence", "")),
+        })
+    body = f"<div class='korea-os-mini-table'>{_korea_table_html(rows)}</div>"
+    return _korea_os_card_html("신호 충돌 매트릭스", "좋은 신호와 나쁜 신호가 동시에 있는지 분리해서 봅니다.", body, "signalConflictMatrix", 5, "긍정/중립/부정")
+
+
+def korea_position_sizing_budget_html(os_data: dict[str, Any]) -> str:
+    item = os_data.get("positionSizing")
+    if item is None:
+        body = _korea_empty_html("포지션 리스크 예산 데이터가 없습니다.")
+        return _korea_os_card_html("포지션 리스크 예산", "손절 기준과 총자산 리스크 한도로 최대 검토 수량을 계산합니다.", body, "positionSizingRiskBudget", 6)
+    status = str(getattr(item, "status", "-") or "-")
+    body = f"""
+        <div style="margin-bottom:10px;">{_korea_badge(status, _korea_tone_for_value(status, "good"))}</div>
+        <div class="korea-os-metrics">
+            {_korea_os_metric_html("진입 기준", korea_format_krw(getattr(item, "entry_price", None)), "info")}
+            {_korea_os_metric_html("손절 기준", korea_format_krw(getattr(item, "stop_price", None)), "risk")}
+            {_korea_os_metric_html("허용손실", _korea_percent_text(getattr(item, "max_loss_pct", None)), "warn")}
+            {_korea_os_metric_html("최대금액", korea_format_krw(getattr(item, "max_position_value", None)), "info")}
+            {_korea_os_metric_html("최대수량", str(getattr(item, "max_quantity", "-") if getattr(item, "max_quantity", None) is not None else "-"), "good")}
+            {_korea_os_metric_html("신뢰도", korea_format_confidence(getattr(item, "confidence", None)), "warn")}
+        </div>
+        <div class="korea-os-callout">{html.escape(str(getattr(item, "action_label", "비중 한도 내 검토") or "비중 한도 내 검토"))}</div>
+    """
+    return _korea_os_card_html("포지션 리스크 예산", "손절 기준과 총자산 리스크 한도로 최대 검토 수량을 계산합니다.", body, "positionSizingRiskBudget", 6, status)
+
+
+def korea_thesis_tracker_html(os_data: dict[str, Any]) -> str:
+    blocks = []
+    for item in os_data.get("theses", []):
+        name = f"{getattr(item, 'name', '-') or '-'} {getattr(item, 'code', '') or ''}".strip()
+        status = str(getattr(item, "status", "-") or "-")
+        invalidation = " / ".join(getattr(item, "invalidation_rules", [])[:2]) or "-"
+        blocks.append(
+            f"""
+            <div class="korea-os-thesis-grid">
+                <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:10px;">
+                    <div class="korea-os-label">{html.escape(name)}</div>
+                    {_korea_badge(status, _korea_tone_for_value(status, "warn"))}
+                </div>
+                <div class="korea-os-thesis"><b>핵심 가설</b><span>{html.escape(str(getattr(item, "core_view", "") or "-"))}</span></div>
+                <div class="korea-os-thesis"><b>무효화 조건</b><span>{html.escape(invalidation)}</span></div>
+                <div class="korea-os-thesis"><b>다음 점검</b><span>{html.escape(str(getattr(item, "next_review", "-") or "-"))}</span></div>
+            </div>
+            """
+        )
+    body = "".join(blocks) if blocks else _korea_empty_html("투자 가설 데이터가 없습니다.")
+    return _korea_os_card_html("투자 가설 트래커", "가설, 근거, 반증 조건을 한 카드에서 추적합니다.", body, "investmentThesisTracker", 6, "검증 중")
+
+
+def korea_prediction_calibration_html(os_data: dict[str, Any]) -> str:
+    item = os_data.get("calibration")
+    if item is None:
+        body = _korea_empty_html("예측 검증 데이터가 없습니다.")
+        return _korea_os_card_html("예측 검증·캘리브레이션", "모델 점수가 실제 성과로 이어졌는지 확인하고 confidence를 보수적으로 조정합니다.", body, "predictionCalibration", 4)
+    status = str(getattr(item, "status", "-") or "-")
+    adjustment = str(getattr(item, "confidence_adjustment", "-") or "-")
+    body = f"""
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">{_korea_badge(status, _korea_tone_for_value(status, "good"))}{_korea_badge(adjustment, "info")}</div>
+        <div class="korea-os-metrics">
+            {_korea_os_metric_html("P@10", _korea_percent_text(getattr(item, "precision_at_10", None)), "good")}
+            {_korea_os_metric_html("Rank IC", _safe_sharpe_text(getattr(item, "rank_ic", None)), "good")}
+            {_korea_os_metric_html("Hit Ratio", _korea_percent_text(getattr(item, "hit_ratio", None)), "info")}
+            {_korea_os_metric_html("Win Rate", _korea_percent_text(getattr(item, "win_rate", None)), "good")}
+        </div>
+    """
+    return _korea_os_card_html("예측 검증·캘리브레이션", "모델 점수가 실제 성과로 이어졌는지 확인하고 confidence를 보수적으로 조정합니다.", body, "predictionCalibration", 4, status)
+
+
+def korea_similar_case_library_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for item in os_data.get("similarCases", []):
+        sample = int(safe_float(getattr(item, "sample_size", 0)) or 0)
+        rows.append({
+            "유형": getattr(item, "label", "-"),
+            "표본": _korea_badge("표본 작음" if sample <= 3 else f"표본 {sample}", "warn" if sample <= 3 else "info"),
+            "승률": _HtmlCell(f"<span class='tone-good'>{html.escape(_korea_percent_text(getattr(item, 'win_rate', None)))}</span>"),
+            "평균성과": _HtmlCell(f"<span class='tone-good'>{html.escape(_korea_percent_text(getattr(item, 'average_forward_return', None), signed=True))}</span>"),
+            "최대낙폭": _HtmlCell(f"<span class='tone-risk'>{html.escape(_korea_percent_text(getattr(item, 'max_drawdown', None)))}</span>"),
+            "근거": _korea_evidence(" / ".join(getattr(item, "evidence", [])[:2])),
+        })
+    body = f"<div class='korea-os-mini-table'>{_korea_table_html(rows)}</div>"
+    return _korea_os_card_html("유사 사례 라이브러리", "비슷한 섹터·점수·리스크 후보의 성과를 참고 자료로 봅니다.", body, "similarCaseLibrary", 4, "참고 자료")
+
+
+def korea_risk_alert_rules_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for item in os_data.get("riskAlerts", []):
+        status = str(getattr(item, "status", "-") or "-")
+        current = str(getattr(item, "current_value", "-") or "-")
+        rows.append(
+            f"""
+            <div class="korea-os-alert-row">
+                <div><div class="korea-os-label">{html.escape(str(getattr(item, "title", "-") or "-"))}</div><div class="korea-os-muted">{html.escape(str(getattr(item, "id", "") or ""))}</div></div>
+                <div>{_korea_badge(status, _korea_tone_for_value(status, "muted"))}</div>
+                <div>{_korea_badge(current, _korea_tone_for_value(current, "muted"))}</div>
+                <div class="korea-os-muted"><code>{html.escape(str(getattr(item, "trigger", "-") or "-"))}</code></div>
+                <div class="korea-os-reason">{html.escape(str(getattr(item, "candidate_action", "관찰") or "관찰"))}</div>
+            </div>
+            """
+        )
+    body = "".join(rows) if rows else _korea_empty_html("리스크 알림 데이터가 없습니다.")
+    return _korea_os_card_html("리스크 알림 규칙", "시장·가격·공시·수급 위험이 켜졌는지 확인합니다.", body, "riskAlertRules", 4, "알림")
+
+
+def korea_scenario_stress_tests_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for item in os_data.get("scenarios", []):
+        impact = safe_float(getattr(item, "impact_pct", None))
+        evidence = " / ".join(getattr(item, "evidence", [])[:2]) or "-"
+        status = str(getattr(item, "status", "-") or "-")
+        rows.append(
+            f"""
+            <div class="korea-os-scenario-row">
+                <div class="korea-os-label">{html.escape(str(getattr(item, "label", "-") or "-"))}</div>
+                <div>{_korea_badge(status, _korea_tone_for_value(status, "risk"))}</div>
+                <div><span class="korea-os-score tone-risk">{html.escape(_korea_percent_text(impact, signed=True))}</span></div>
+                <div>{_korea_badge(getattr(item, "candidate_action", "관찰"), "warn")}</div>
+                <div class="korea-os-reason" title="{html.escape(evidence)}">{html.escape(evidence)}</div>
+            </div>
+            """
+        )
+    body = "".join(rows) if rows else _korea_empty_html("시나리오 데이터가 없습니다.")
+    return _korea_os_card_html("시나리오 스트레스 테스트", "환율·금리·지수·유동성 충격에서 기대값이 어떻게 흔들리는지 봅니다.", body, "scenarioStressTest", 8, "방어 확인")
+
+
+def korea_catalyst_calendar_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for item in os_data.get("catalysts", []):
+        severity = getattr(item, "severity", "-")
+        rows.append({
+            "일자": getattr(item, "date", "-"),
+            "종목": getattr(item, "code", "-") or "-",
+            "이벤트": _korea_evidence(getattr(item, "title", "")),
+            "심각도": _korea_badge(severity, _korea_tone_for_value(severity, "muted")),
+            "영향": _korea_evidence(getattr(item, "expected_effect", "-")),
+        })
+    body = f"<div class='korea-os-mini-table'>{_korea_table_html(rows)}</div>"
+    return _korea_os_card_html("촉매·이벤트 캘린더", "공시, 실적, 정책 이벤트를 검토 흐름에 연결합니다.", body, "catalystEventCalendar", 4, "이벤트")
+
+
+def korea_post_review_notebook_html(os_data: dict[str, Any]) -> str:
+    rows = []
+    for item in os_data.get("postReview", []):
+        r_multiple = safe_float(getattr(item, "realized_r_multiple", None))
+        rows.append({
+            "종목": getattr(item, "code", "-") or "-",
+            "상태": _korea_badge(getattr(item, "status", "-"), "warn"),
+            "R배수": _HtmlCell(f"<span class='{'tone-risk' if (r_multiple or 0) < 0 else 'tone-good'}'>{html.escape(_safe_sharpe_text(r_multiple))}</span>"),
+            "20D 성과": _korea_percent_text(getattr(item, "forward_return_20d", None), signed=True),
+            "드리프트": _korea_evidence(getattr(item, "drift_status", "-")),
+            "다음": _korea_evidence(getattr(item, "next_action", "-")),
+        })
+    body = f"<div class='korea-os-mini-table'>{_korea_table_html(rows)}</div>"
+    return _korea_os_card_html("사후 리뷰 노트", "검토 후 성과를 누적해 약한 신호 유형을 줄입니다.", body, "postReviewNotebook", 12, "기록 대기")
 
 
 def render_korea_decision_flow(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("decisionFlow", []):
-        rows.append({"단계": getattr(item, "title", "-"), "상태": _korea_badge(getattr(item, "status", "-"), "good" if getattr(item, "status", "") == "통과" else "warn"), "점수": korea_format_score(getattr(item, "score", None)), "액션 후보": getattr(item, "candidate_action", "관찰"), "근거": _korea_evidence(" / ".join(getattr(item, "primary_evidence", [])[:2]) or getattr(item, "blocking_reason", ""))})
-    _render_os_rows(rows, "의사결정 흐름", "시장→후보→리스크→검증→결론 순서로 보류 사유를 확인합니다.", "decisionFlow")
+    st.html(korea_decision_flow_html(os_data))
 
 
 def render_korea_signal_conflict_matrix(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("signalConflicts", []):
-        direction = getattr(item, "direction", "neutral")
-        tone = "good" if direction == "positive" else "risk" if direction == "negative" else "muted"
-        rows.append({"신호": getattr(item, "signal", "-"), "방향": _korea_badge(direction, tone), "강도": korea_format_score(getattr(item, "strength", None)), "충돌": getattr(item, "conflict_with", None) or "-", "근거": _korea_evidence(getattr(item, "evidence", ""))})
-    _render_os_rows(rows, "신호 충돌 매트릭스", "좋은 신호와 나쁜 신호가 동시에 있는지 분리해서 봅니다.", "signalConflictMatrix")
+    st.html(korea_signal_conflict_matrix_html(os_data))
 
 
 def render_korea_position_sizing_budget(os_data: dict[str, Any]) -> None:
-    item = os_data.get("positionSizing")
-    rows = [] if item is None else [{"상태": getattr(item, "status", "-"), "진입 기준": korea_format_krw(getattr(item, "entry_price", None)), "손절 기준": korea_format_krw(getattr(item, "stop_price", None)), "허용손실": korea_format_percent(getattr(item, "max_loss_pct", None)), "최대금액": korea_format_krw(getattr(item, "max_position_value", None)), "최대수량": getattr(item, "max_quantity", None) if getattr(item, "max_quantity", None) is not None else "-", "액션 후보": getattr(item, "action_label", "관찰")}]
-    _render_os_rows(rows, "포지션 리스크 예산", "손절 기준과 총자산 리스크 한도로 최대 검토 수량을 계산합니다.", "positionSizingRiskBudget")
+    st.html(korea_position_sizing_budget_html(os_data))
 
 
 def render_korea_scenario_stress_tests(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("scenarios", []):
-        rows.append({"시나리오": getattr(item, "label", "-"), "상태": _korea_badge(getattr(item, "status", "-"), "risk" if getattr(item, "status", "") == "방어 우선" else "good"), "영향": korea_format_percent(getattr(item, "impact_pct", None), signed=True), "액션 후보": getattr(item, "candidate_action", "관찰"), "근거": _korea_evidence(" / ".join(getattr(item, "evidence", [])[:2]))})
-    _render_os_rows(rows, "시나리오 스트레스 테스트", "환율·금리·지수·유동성 충격에서 기대값이 어떻게 흔들리는지 봅니다.", "scenarioStressTest")
+    st.html(korea_scenario_stress_tests_html(os_data))
 
 
 def render_korea_thesis_tracker(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("theses", []):
-        rows.append({"종목": f"{getattr(item, 'name', '-') or '-'} {getattr(item, 'code', '') or ''}", "상태": _korea_badge(getattr(item, "status", "-"), "warn" if "반증" in getattr(item, "status", "") else "info"), "핵심 가설": _korea_evidence(getattr(item, "core_view", "")), "무효화 조건": _korea_evidence(" / ".join(getattr(item, "invalidation_rules", [])[:2])), "다음 점검": getattr(item, "next_review", "-")})
-    _render_os_rows(rows, "투자 가설 트래커", "가설, 근거, 반증 조건을 한 카드에서 추적합니다.", "investmentThesisTracker")
+    st.html(korea_thesis_tracker_html(os_data))
 
 
 def render_korea_catalyst_calendar(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("catalysts", []):
-        rows.append({"일자": getattr(item, "date", "-"), "종목": getattr(item, "code", "-") or "-", "이벤트": _korea_evidence(getattr(item, "title", "")), "심각도": _korea_badge(getattr(item, "severity", "-"), "risk" if getattr(item, "severity", "") == "high" else "muted"), "영향": getattr(item, "expected_effect", "-")})
-    _render_os_rows(rows, "촉매·이벤트 캘린더", "공시, 실적, 정책 이벤트를 검토 흐름에 연결합니다.", "catalystEventCalendar")
+    st.html(korea_catalyst_calendar_html(os_data))
 
 
 def render_korea_prediction_calibration(os_data: dict[str, Any]) -> None:
-    item = os_data.get("calibration")
-    rows = [] if item is None else [{"상태": getattr(item, "status", "-"), "P@10": korea_format_percent(getattr(item, "precision_at_10", None)), "Rank IC": _safe_sharpe_text(getattr(item, "rank_ic", None)), "Hit Ratio": korea_format_percent(getattr(item, "hit_ratio", None)), "Win Rate": korea_format_percent(getattr(item, "win_rate", None)), "신뢰도 적용": getattr(item, "confidence_adjustment", "-")}]
-    _render_os_rows(rows, "예측 검증·캘리브레이션", "모델 점수가 실제 성과로 이어졌는지 확인하고 confidence를 보수적으로 조정합니다.", "predictionCalibration")
+    st.html(korea_prediction_calibration_html(os_data))
 
 
 def render_korea_risk_alert_rules(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("riskAlerts", []):
-        rows.append({"알림": getattr(item, "title", "-"), "상태": _korea_badge(getattr(item, "status", "-"), "risk" if getattr(item, "status", "") == "활성" else "muted"), "조건": getattr(item, "trigger", "-"), "현재값": getattr(item, "current_value", "-"), "액션 후보": getattr(item, "candidate_action", "관찰")})
-    _render_os_rows(rows, "리스크 알림 규칙", "시장·가격·공시·수급 위험이 켜졌는지 확인합니다.", "riskAlertRules")
+    st.html(korea_risk_alert_rules_html(os_data))
 
 
 def render_korea_similar_case_library(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("similarCases", []):
-        rows.append({"유형": getattr(item, "label", "-"), "표본": getattr(item, "sample_size", 0), "승률": korea_format_percent(getattr(item, "win_rate", None)), "평균성과": korea_format_percent(getattr(item, "average_forward_return", None), signed=True), "최대낙폭": korea_format_percent(getattr(item, "max_drawdown", None)), "근거": _korea_evidence(" / ".join(getattr(item, "evidence", [])[:2]))})
-    _render_os_rows(rows, "유사 사례 라이브러리", "비슷한 섹터·점수·리스크 후보의 성과를 참고 자료로 봅니다.", "similarCaseLibrary")
+    st.html(korea_similar_case_library_html(os_data))
 
 
 def render_korea_post_review_notebook(os_data: dict[str, Any]) -> None:
-    rows = []
-    for item in os_data.get("postReview", []):
-        rows.append({"종목": getattr(item, "code", "-") or "-", "상태": getattr(item, "status", "-"), "R배수": _safe_sharpe_text(getattr(item, "realized_r_multiple", None)), "20D 성과": korea_format_percent(getattr(item, "forward_return_20d", None), signed=True), "드리프트": getattr(item, "drift_status", "-"), "다음": getattr(item, "next_action", "-")})
-    _render_os_rows(rows, "사후 리뷰 노트", "검토 후 성과를 누적해 약한 신호 유형을 줄입니다.", "postReviewNotebook")
+    st.html(korea_post_review_notebook_html(os_data))
 
 
 def render_korea_investment_os_section(os_data: dict[str, Any]) -> None:
-    _korea_module_title("Korea Investment OS v2", "검토 흐름, 충돌, 리스크 예산, 시나리오, 가설, 촉매, 검증, 리뷰를 연결한 의사결정 보드입니다.", "주문 기능 없음")
+    nav_items = [
+        ("decisionFlow", "흐름"),
+        ("signalConflictMatrix", "충돌"),
+        ("positionSizingRiskBudget", "리스크"),
+        ("investmentThesisTracker", "가설"),
+        ("predictionCalibration", "검증"),
+        ("scenarioStressTest", "시나리오"),
+        ("catalystEventCalendar", "이벤트"),
+        ("riskAlertRules", "알림"),
+        ("postReviewNotebook", "리뷰"),
+        ("investmentAlgorithm", "알고리즘"),
+        ("factorHeatmap", "히트맵"),
+        ("supplyDemandRadar", "수급"),
+        ("disclosureRadar", "공시"),
+        ("valueUpRadar", "밸류업"),
+        ("backtestAccuracy", "백테스트"),
+        ("portfolioReviewQueue", "큐"),
+    ]
+    nav_html = "".join(
+        f'<a href="#{html.escape(MODULE_IDS.get(module, module))}">{html.escape(label)}</a>'
+        for module, label in nav_items
+    )
     if not os_data:
-        st.html(f'<div class="korea-card compact">{_korea_empty_html("Investment OS 데이터가 없습니다.", "한국 알파 데이터가 준비되면 자동으로 표시됩니다.")}</div>')
+        st.html(
+            f"""
+            <section class="korea-os-shell">
+                <div class="korea-os-hero"><div><strong>Korea Investment OS v2</strong><span>검토 흐름, 충돌, 리스크 예산, 시나리오, 가설, 촉매, 검증, 리뷰를 연결한 의사결정 보드입니다.</span></div>{_korea_badge("주문 기능 없음", "muted")}</div>
+                {_korea_empty_html("Investment OS 데이터가 없습니다.", "한국 알파 데이터가 준비되면 자동으로 표시됩니다.")}
+            </section>
+            """
+        )
         return
-    render_korea_decision_flow(os_data)
-    left, right = st.columns([1, 1])
-    with left:
-        render_korea_signal_conflict_matrix(os_data)
-        render_korea_position_sizing_budget(os_data)
-        render_korea_thesis_tracker(os_data)
-        render_korea_prediction_calibration(os_data)
-        render_korea_similar_case_library(os_data)
-    with right:
-        render_korea_scenario_stress_tests(os_data)
-        render_korea_catalyst_calendar(os_data)
-        render_korea_risk_alert_rules(os_data)
-        render_korea_post_review_notebook(os_data)
+    body = "\n".join(
+        [
+            korea_decision_flow_html(os_data),
+            korea_signal_conflict_matrix_html(os_data),
+            korea_position_sizing_budget_html(os_data),
+            korea_thesis_tracker_html(os_data),
+            korea_prediction_calibration_html(os_data),
+            korea_similar_case_library_html(os_data),
+            korea_risk_alert_rules_html(os_data),
+            korea_scenario_stress_tests_html(os_data),
+            korea_catalyst_calendar_html(os_data),
+            korea_post_review_notebook_html(os_data),
+        ]
+    )
+    st.html(
+        f"""
+        <section class="korea-os-shell" aria-label="Korea Investment OS v2">
+            <div class="korea-os-hero">
+                <div>
+                    <strong>Korea Investment OS v2</strong>
+                    <span>검토 흐름, 충돌, 리스크 예산, 시나리오, 가설, 촉매, 검증, 리뷰를 연결한 의사결정 보드입니다.</span>
+                </div>
+                {_korea_badge("주문 기능 없음", "muted")}
+            </div>
+            <nav class="korea-os-nav" aria-label="Korea Investment OS v2 module navigation">{nav_html}</nav>
+            <div class="korea-os-grid">{body}</div>
+        </section>
+        """
+    )
 
 
 def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int) -> None:
@@ -5506,7 +7071,6 @@ def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int
         render_korea_value_up_radar(data.get("valueUpCandidates", []))
     render_korea_backtest_accuracy_panel(data["backtest"])
     render_korea_portfolio_action_queue(all_scores)
-    st.caption("Mock mode: 공식 실시간 주문 기능은 제공하지 않습니다. 실제 매매 전 원천 데이터와 공시를 반드시 재확인하세요.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -6069,6 +7633,7 @@ def render_dashboard_section(
     )
     fg_cols = st.columns([1.35, 1])
     with fg_cols[0]:
+        render_fear_greed_visibility_gauge(fg_score, fg_label, fg_color, fg_advice)
         st.pyplot(plot_fear_greed_bar(fg_score, fg_label, fg_color), clear_figure=True)
     with fg_cols[1]:
         position_text = (
@@ -6179,7 +7744,7 @@ def render_dashboard_section(
         st.caption("시장 해석: " + " / ".join(market_notes[:3]))
 
     render_module_anchor("candleVolumeChart")
-    st.markdown('<div class="section-title">최근 캔들 + 거래량</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">최근 60거래일 캔들 + 거래량</div>', unsafe_allow_html=True)
     if active_hist.empty:
         st.warning("선택 종목의 가격 데이터를 불러오지 못했습니다.")
     else:
