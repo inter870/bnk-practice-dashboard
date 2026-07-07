@@ -73,8 +73,7 @@ from src.portfolio import (
     getPortfolioSummary,
     getWatchlist,
 )
-from src.korea_equity import (
-    KoreaMarketStatus,
+from src.korea_equity.formatting import (
     candleSummaryText as korea_candle_summary_text,
     fearGreedBand as korea_fear_greed_band,
     formatConfidence as korea_format_confidence,
@@ -88,11 +87,16 @@ from src.korea_equity import (
     formatScore as korea_format_score,
     formatTradingValue as korea_format_trading_value,
     formatVolume as korea_format_volume,
+    heatmapBucket as korea_heatmap_bucket,
     normalizeNegativeZero as korea_normalize_negative_zero,
+)
+from src.korea_equity.models import (
+    KoreaMarketStatus,
+)
+from src.korea_equity.service import (
     getKoreaDashboardData,
     getKoreaPriceHistory,
     getKoreaSupplyDemand,
-    heatmapBucket as korea_heatmap_bucket,
 )
 from src.korea_equity.explanations import explanation_for_factor, get_metric_explanation
 from src.korea_equity.design_tokens import KOREA_DASHBOARD_VISIBILITY_CSS, KOREA_MODULE_VISUAL_REGISTRY
