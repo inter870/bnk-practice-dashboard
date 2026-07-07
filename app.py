@@ -209,7 +209,7 @@ configure_korean_font()
 
 
 st.set_page_config(
-    page_title="BNK 금융 대시보드",
+    page_title="Stance Stock Strategy",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -6715,7 +6715,7 @@ def summarize_stock(code: str, name: str, history: pd.DataFrame, kospi_close: pd
 
 
 def main() -> None:
-    st.markdown('<div class="hero-title">세계 수준의 금융 대시보드</div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero-title">Stance Stock Strategy</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="hero-subtitle">코스피, 코스닥, 환율, 금리, 관심 종목을 한 화면에서 보고 오늘의 매수/중립/매도 판단과 행동 원칙까지 바로 확인합니다.</div>',
         unsafe_allow_html=True,
