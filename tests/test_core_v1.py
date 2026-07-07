@@ -78,6 +78,14 @@ class CoreV1Tests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("중복" in err for err in errors))
 
+    def test_kis_provider_disabled_without_credentials(self):
+        if app.KIS_APP_KEY and app.KIS_APP_SECRET:
+            self.skipTest("KIS credentials configured in this environment")
+        self.assertFalse(app.kis_enabled())
+        token, error = app.get_kis_access_token(0)
+        self.assertIsNone(token)
+        self.assertIn("KIS_APP_KEY", error)
+
 
 if __name__ == "__main__":
     unittest.main()
