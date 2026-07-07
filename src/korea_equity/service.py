@@ -4,6 +4,7 @@ from typing import Any
 
 from .backtest_engine import summarizeBacktest
 from .config import DATA_MODE
+from .decision_os import buildKoreaInvestmentOS
 from .mock_data import (
     DISCLOSURES,
     FUNDAMENTALS,
@@ -107,13 +108,27 @@ def getKoreaDashboardData(options: dict[str, Any] | None = None) -> dict[str, An
     top = rankKoreaAlphaCandidates(scores, int(options.get("limit", 10)))
     disclosures = [event for events in DISCLOSURES.values() for event in events]
     value_up = [score for score in scores if VALUE_UP_FLAGS.get(score.code) or (score.factor_scores and score.factor_scores.value_up >= 65)]
+    market_status = getKoreaMarketStatus(options)
+    backtest = summarizeBacktest(scores)
+    risk_summary = portfolioRiskSummary(scores)
+    value_up_candidates = rankKoreaAlphaCandidates(value_up, 8)
+    investment_os = buildKoreaInvestmentOS(
+        top,
+        market_status=market_status,
+        backtest=backtest,
+        disclosures=sorted(disclosures, key=lambda event: (event.date, event.importance), reverse=True)[:12],
+        value_up_candidates=value_up_candidates,
+        risk_summary=risk_summary,
+        portfolio=options.get("portfolio"),
+    )
     return {
         "dataMode": DATA_MODE,
-        "marketStatus": getKoreaMarketStatus(options),
+        "marketStatus": market_status,
         "scores": scores,
         "topCandidates": top,
-        "backtest": summarizeBacktest(scores),
+        "backtest": backtest,
         "disclosures": sorted(disclosures, key=lambda event: (event.date, event.importance), reverse=True)[:12],
-        "valueUpCandidates": rankKoreaAlphaCandidates(value_up, 8),
-        "riskSummary": portfolioRiskSummary(scores),
+        "valueUpCandidates": value_up_candidates,
+        "riskSummary": risk_summary,
+        "investmentOS": investment_os,
     }

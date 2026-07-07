@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 from .config import DEFAULT_SLIPPAGE_BPS, DEFAULT_TAX_BPS, DEFAULT_TRANSACTION_COST_BPS
 from .factor_engine import calculateMaxDrawdown as factorMaxDrawdown
-from .factor_engine import clamp, safeNumber
+from .factor_engine import safeNumber
 from .models import KoreaBacktestResult
 
 
@@ -254,5 +254,5 @@ def summarizeBacktest(scores: Iterable[Any]) -> KoreaBacktestResult:
         long_short_spread=validation["top_decile_spread"],
         factor_ic=validation["factor_ic"],
         factor_rank_ic=validation["rank_ic"],
-        notes=["mock data 기반 검증", "거래비용/슬리피지/세금 가정 포함", "실거래 신호가 아닌 모델 품질 점검"],
+        notes=["mock data 기반 검증", "거래비용·슬리피지·세금 가정 포함", "과거 신호는 미래 성과를 보장하지 않음"],
     )

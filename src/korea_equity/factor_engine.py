@@ -477,7 +477,7 @@ def generateKoreaStockRationale(scoreBreakdown: dict[str, Any]) -> tuple[list[st
     label_map = {
         "momentum": "모멘텀",
         "quality": "퀄리티",
-        "value": "밸류에이션",
+        "value": "밸류",
         "earnings_revision": "실적 추정",
         "supply_demand": "수급",
         "event_catalyst": "공시 이벤트",
@@ -489,7 +489,7 @@ def generateKoreaStockRationale(scoreBreakdown: dict[str, Any]) -> tuple[list[st
         if value is None:
             continue
         if value >= 68:
-            positives.append(f"{label} 점수 우수({value:.0f})")
+            positives.append(f"{label} 점수 강함({value:.0f})")
         elif value <= 42:
             negatives.append(f"{label} 점수 취약({value:.0f})")
     penalty = safeNumber(scoreBreakdown.get("risk_penalty"), 0) or 0.0

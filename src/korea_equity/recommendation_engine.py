@@ -4,21 +4,9 @@ from dataclasses import replace
 from typing import Any
 
 from .config import MODEL_VERSION
-from .factor_engine import (
-    calculateKoreaCompositeAlphaScore,
-    calculateVolatility,
-    classifyRecommendationGrade,
-    generateKoreaStockRationale,
-    safeNumber,
-)
+from .factor_engine import calculateKoreaCompositeAlphaScore, calculateVolatility, classifyRecommendationGrade, generateKoreaStockRationale, safeNumber
 from .models import FactorScores, KoreaFactorScore, KoreaFundamentalSnapshot, KoreaTicker
-from .prediction_engine import (
-    calculatePredictionConfidence,
-    estimateExpectedAlpha,
-    estimateForwardReturnRange,
-    estimateOutperformanceProbability,
-    explainPredictionDrivers,
-)
+from .prediction_engine import calculatePredictionConfidence, estimateExpectedAlpha, estimateForwardReturnRange, estimateOutperformanceProbability, explainPredictionDrivers
 from .risk_engine import calculateRiskAdjustedPositionSize, evaluateKoreaRisk
 
 

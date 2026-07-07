@@ -90,6 +90,21 @@ from src.korea_equity import (
     getKoreaSupplyDemand,
     heatmapBucket as korea_heatmap_bucket,
 )
+from src.korea_equity.explanations import explanation_for_factor, get_metric_explanation
+from src.korea_equity.interaction import (
+    FACTOR_TO_METRIC,
+    MODULE_DEFAULT_METRIC,
+    MODULE_IDS,
+    SelectedContext,
+    formatFactorLabel,
+    formatMetricLabel,
+    formatModuleLabel,
+    merge_context,
+    parse_query_context,
+    related_modules_for_metric,
+    safe_external_url,
+    serialize_query_context,
+)
 
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -184,8 +199,8 @@ BRIEFING_SYSTEM_FILES = [
     BASE_DIR / "kb_signal_rules.md",
 ]
 OUTPUT_SCHEMA_FILE = BASE_DIR / "output_schema.md"
-BRIEFING_DISCLAIMER = "본 브리핑은 투자 참고용이며 투자 판단과 책임은 투자자 본인에게 있습니다."
-BRIEFING_BANNED_PHRASES = ["매수 추천", "목표가", "보장"]
+BRIEFING_DISCLAIMER = "본 브리핑은 투자 의사결정 보조 자료이며, 매수·매도 지시나 수익 보장을 의미하지 않습니다."
+BRIEFING_BANNED_PHRASES = ["무조건 매수", "수익 보장", "확정 수익"]
 
 
 def configure_korean_font() -> None:
@@ -210,7 +225,7 @@ configure_korean_font()
 
 st.set_page_config(
     page_title="Stance Stock Strategy",
-    page_icon="📈",
+    page_icon="SS",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -256,6 +271,11 @@ CUSTOM_CSS = """
     .element-container {
         max-width: 100%;
         min-width: 0;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"] {
+        overflow-x: clip;
     }
     [data-testid="stDataFrame"],
     [data-testid="stTable"],
@@ -688,6 +708,25 @@ CUSTOM_CSS = """
             max-width: 100vw !important;
             padding-left: 0.75rem;
             padding-right: 0.75rem;
+            overflow-x: hidden !important;
+        }
+        [data-testid="stMain"],
+        [data-testid="stMainBlockContainer"],
+        [data-testid="stVerticalBlock"],
+        [data-testid="stHorizontalBlock"],
+        [data-testid="column"],
+        .element-container {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            overflow-x: hidden;
+        }
+        [data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 0.75rem !important;
+        }
+        [data-testid="column"] {
+            flex: 1 1 100% !important;
         }
         .metric-card,
         .signal-box,
@@ -1000,6 +1039,55 @@ CUSTOM_CSS = """
     .korea-badge.warn { background: rgba(245, 158, 11, 0.86); }
     .korea-badge.risk { background: rgba(239, 68, 68, 0.86); }
     .korea-badge.muted { background: rgba(100, 116, 139, 0.82); }
+    .korea-context-bar,
+    .korea-explanation-panel {
+        border-radius: 12px;
+        padding: 12px 14px;
+        margin: 10px 0;
+        background: rgba(15, 23, 42, 0.92);
+        border: 1px solid rgba(196, 181, 253, 0.24);
+        color: #e2e8f0;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 12px 28px rgba(2, 6, 23, 0.2);
+    }
+    .korea-context-bar strong,
+    .korea-explanation-panel strong {
+        color: #ffffff;
+        font-weight: 950;
+    }
+    .korea-context-meta,
+    .korea-explain-muted {
+        color: #cbd5e1;
+        font-size: 0.8rem;
+        font-weight: 720;
+        line-height: 1.5;
+    }
+    .korea-selected-card {
+        outline: 2px solid rgba(167, 139, 250, 0.8);
+        box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.12);
+    }
+    .korea-mini-link {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 9px;
+        margin: 3px 4px 3px 0;
+        background: rgba(88, 28, 135, 0.58);
+        color: #e9d5ff;
+        border: 1px solid rgba(196, 181, 253, 0.24);
+        font-size: 0.72rem;
+        font-weight: 850;
+    }
+    .korea-row-card {
+        border-radius: 10px;
+        padding: 10px;
+        margin: 7px 0;
+        background: rgba(30, 41, 59, 0.58);
+        border: 1px solid rgba(196, 181, 253, 0.13);
+    }
+    .korea-row-card.selected {
+        border-color: rgba(167, 139, 250, 0.88);
+        background: rgba(76, 29, 149, 0.34);
+    }
     .korea-table-wrap {
         width: 100%;
         max-width: 100%;
@@ -1318,31 +1406,31 @@ SOURCE_LABELS = {
 
 
 def snapshot_source_label(snap: Snapshot) -> str:
-    source = SOURCE_LABELS.get(snap.source, snap.source or "출처 확인")
+    source = SOURCE_LABELS.get(snap.source, snap.source or "출처 미상")
     score = snap.quality_score if snap.quality_score else 0
     return f"{source} · 품질 {score}"
 
 
 ACTION_LABELS_KO = {
-    "Strong Buy": "강한 매수 후보",
-    "Buy on Pullback": "눌림 매수",
-    "Accumulate Small": "소액 분할",
+    "Strong Buy": "강한 검토 후보",
+    "Buy on Pullback": "눌림목 검토",
+    "Accumulate Small": "소액 분할 검토",
     "Hold / Watch": "보유·관찰",
     "Watch Only": "관찰만",
-    "Trim": "일부 축소",
+    "Trim": "비중 축소 검토",
     "Sell / Avoid": "회피",
 }
 
 
 def action_label_ko(action: str | None) -> str:
-    return ACTION_LABELS_KO.get(action or "", action or "관찰만")
+    return ACTION_LABELS_KO.get(action or "", action or "관찰")
 
 
 SEVERITY_LABELS_KO = {
     "Low": "낮음",
     "Medium": "주의",
     "High": "높음",
-    "Critical": "치명",
+    "Critical": "심각",
 }
 
 
@@ -1401,7 +1489,7 @@ def quality_level(score: int) -> tuple[str, str]:
         return "일부 경고", "#f97316"
     if score >= 50:
         return "주의", "#eab308"
-    return "판단 제한", "#2563eb"
+    return "사용 불가", "#2563eb"
 
 
 def assess_data_quality(
@@ -1430,7 +1518,7 @@ def assess_data_quality(
         age_hours = max((pd.Timestamp.now() - pd.Timestamp(updated_at)).total_seconds() / 3600, 0)
         if frequency in {"near_realtime", "intraday"} and age_hours > 6:
             score -= 30
-            warnings.append("장중 데이터 시점 지연")
+            warnings.append("단기 데이터 시점 지연")
         elif frequency in {"daily", "historical"} and age_hours > 96:
             score -= 20
             warnings.append("일별 데이터 stale 가능성")
@@ -1442,7 +1530,7 @@ def assess_data_quality(
         warnings.append("보조 데이터 소스 사용")
     if last_close is None:
         score -= 35
-        errors.append("가격/수치 결측")
+        errors.append("가격 수치 결측")
     elif safe_float(last_close) is not None and float(last_close) <= 0:
         score -= 45
         errors.append("0 이하 값")
@@ -1453,7 +1541,7 @@ def assess_data_quality(
         calc_pct = (float(change) / float(prev_close)) * 100
         if abs(calc_pct - float(change_pct)) > 0.2:
             score -= 15
-            warnings.append("전일 대비 재검산 차이")
+            warnings.append("전일 대비 등락률 차이")
 
     return int(max(0, min(100, score))), warnings, errors
 
@@ -1527,13 +1615,13 @@ def get_kis_access_token(refresh_token: int) -> tuple[str | None, str | None]:
         payload = response.json() if response.content else {}
         if response.status_code >= 400:
             message = payload.get("msg1") or payload.get("error_description") or response.reason
-            return None, f"KIS token 실패: {message}"
+            return None, f"KIS token 응답 오류: {message}"
         token = payload.get("access_token")
         if not token:
             return None, "KIS token 응답에 access_token 없음"
         return str(token), None
     except Exception as exc:
-        return None, f"KIS token 예외: {exc}"
+        return None, f"KIS token 요청 실패: {exc}"
 
 
 def fetch_kis_stock_snapshot(code: str, display_name: str, refresh_token: int) -> Snapshot | None:
@@ -2079,9 +2167,8 @@ def calc_returns(close: pd.Series) -> dict[str, float | None]:
 
 
 def market_regime(snapshot: dict[str, Snapshot]) -> tuple[float, list[str]]:
-    notes: list[str] = []
     score = 0.0
-
+    notes: list[str] = []
     kospi = snapshot.get("KOSPI")
     kosdaq = snapshot.get("KOSDAQ")
     usdkrw = snapshot.get("USD/KRW")
@@ -2099,43 +2186,41 @@ def market_regime(snapshot: dict[str, Snapshot]) -> tuple[float, list[str]]:
         if r20 is None or r60 is None:
             return 0.0
         if r20 > 0 and r60 > 0:
-            notes.append(f"{name} 추세 양호")
+            notes.append(f"{name} trend positive")
             return 0.9
         if r20 < 0 and r60 < 0:
-            notes.append(f"{name} 추세 약세")
+            notes.append(f"{name} trend negative")
             return -0.9
         return 0.0
 
-    score += slope_bonus(kospi, "코스피")
-    score += slope_bonus(kosdaq, "코스닥")
+    score += slope_bonus(kospi, "KOSPI")
+    score += slope_bonus(kosdaq, "KOSDAQ")
 
     if usdkrw and usdkrw.change_pct is not None:
         if usdkrw.change_pct > 0:
             score -= 0.5
-            notes.append("원화 약세 부담")
+            notes.append("USD/KRW rising pressure")
         elif usdkrw.change_pct < 0:
             score += 0.3
-            notes.append("원화 강세 우호")
+            notes.append("USD/KRW easing")
 
     if us10y and us10y.change_pct is not None:
         if us10y.change_pct > 0:
             score -= 0.35
-            notes.append("미국 10년물 상승 부담")
+            notes.append("US 10Y yield pressure")
         elif us10y.change_pct < 0:
             score += 0.2
-            notes.append("미국 10년물 둔화")
+            notes.append("US 10Y yield easing")
 
     if kr3y and kr3y.change_pct is not None:
         if kr3y.change_pct > 0:
             score -= 0.2
-            notes.append("국내 금리 부담")
+            notes.append("KR 3Y yield pressure")
         elif kr3y.change_pct < 0:
             score += 0.1
-            notes.append("국내 금리 완화")
+            notes.append("KR 3Y yield easing")
 
     return score, notes
-
-
 def relative_strength(stock_close: pd.Series, benchmark_close: pd.Series) -> float | None:
     if len(stock_close) < 21 or len(benchmark_close) < 21:
         return None
@@ -2155,7 +2240,7 @@ def stock_signal(
     kospi_close: pd.Series | None,
 ) -> tuple[str, float, list[str]]:
     if history is None or history.empty:
-        return "중립", 50.0, ["데이터가 부족해 중립"]
+        return "Neutral", 50.0, ["price data unavailable"]
     _, _, _, close_col, volume_col = find_ohlcv_columns(history)
     close = history[close_col].dropna()
     volume = history[volume_col].dropna() if volume_col in history.columns else pd.Series(dtype=float)
@@ -2170,12 +2255,12 @@ def stock_signal(
             return
         delta = max(min(value, 25.0), -25.0) / 25.0 * weight
         score += delta
-        direction = "우호" if value >= threshold else "비우호"
+        direction = "positive" if value >= threshold else "negative"
         reasons.append(f"{label} {direction}({value:+.2f}%)")
 
-    add_weight(ret["5d"], 7.5, "5일 추세")
-    add_weight(ret["20d"], 12.0, "20일 추세")
-    add_weight(ret["60d"], 9.0, "60일 추세")
+    add_weight(ret["5d"], 7.5, "5D trend")
+    add_weight(ret["20d"], 12.0, "20D trend")
+    add_weight(ret["60d"], 9.0, "60D trend")
 
     if len(close) >= 20:
         ma5 = float(close.tail(5).mean())
@@ -2183,71 +2268,68 @@ def stock_signal(
         last = float(close.iloc[-1])
         if last > ma5:
             score += 4.0
-            reasons.append("종가가 5일선 위")
+            reasons.append("close above 5D average")
         else:
             score -= 3.0
-            reasons.append("종가가 5일선 아래")
+            reasons.append("close below 5D average")
         if last > ma20:
             score += 6.0
-            reasons.append("종가가 20일선 위")
+            reasons.append("close above 20D average")
         else:
             score -= 5.0
-            reasons.append("종가가 20일선 아래")
+            reasons.append("close below 20D average")
 
     if volume is not None and len(volume) >= 20:
-        vol_ratio = float(volume.iloc[-1] / volume.tail(20).mean()) if volume.tail(20).mean() not in (0, np.nan) else None
+        vol_avg = volume.tail(20).mean()
+        vol_ratio = float(volume.iloc[-1] / vol_avg) if vol_avg not in (0, np.nan) else None
         if vol_ratio is not None:
             if vol_ratio >= 1.2:
                 score += 6.0
-                reasons.append(f"거래량 확인({vol_ratio:.2f}x)")
+                reasons.append(f"volume confirmation({vol_ratio:.2f}x)")
             elif vol_ratio <= 0.85:
                 score -= 2.5
-                reasons.append(f"거래량 둔화({vol_ratio:.2f}x)")
+                reasons.append(f"volume weak({vol_ratio:.2f}x)")
 
     if kospi_close is not None and len(close) >= 21 and len(kospi_close) >= 21:
         rs = relative_strength(close, kospi_close)
         if rs is not None:
             score += max(min(rs, 15.0), -15.0) / 15.0 * 10.0
-            reasons.append(f"코스피 대비 상대강도 {rs:+.2f}%p")
+            reasons.append(f"relative strength vs KOSPI {rs:+.2f}%p")
 
     if len(close) >= 20:
         recent = close.tail(20)
         vol = float(recent.pct_change().dropna().std() * math.sqrt(252) * 100)
         if vol >= 80:
             score -= 4.0
-            reasons.append(f"변동성 높음({vol:.1f}%)")
+            reasons.append(f"high volatility({vol:.1f}%)")
         elif vol <= 35:
             score += 2.0
-            reasons.append(f"변동성 안정({vol:.1f}%)")
+            reasons.append(f"stable volatility({vol:.1f}%)")
 
     score += market_score * 2.0
     if market_score > 0:
-        reasons.append("시장 레짐 우호")
+        reasons.append("market pressure positive")
     elif market_score < 0:
-        reasons.append("시장 레짐 부담")
+        reasons.append("market pressure negative")
 
     score = float(max(0.0, min(100.0, score)))
     if score >= 60:
-        label = "매수"
+        label = "Buy"
     elif score <= 40:
-        label = "매도"
+        label = "Sell"
     else:
-        label = "중립"
+        label = "Neutral"
     return label, score, reasons[:6]
-
-
 def coach_message(market_score: float, signal: str, stock_score: float, volatility_flag: str) -> str:
-    if market_score >= 1.0 and signal == "매수":
-        return "추세가 살아있습니다. 추격보다 분할, 손절보다 비중 관리로 갑니다."
-    if market_score <= -1.0 and signal == "매도":
-        return "방어가 먼저입니다. 현금 비중을 지키고, 역추세 매수는 멈추세요."
+    if market_score >= 1.0 and signal == "Buy":
+        return "Trend is supportive. Prefer staged review with clear risk limits."
+    if market_score <= -1.0 and signal == "Sell":
+        return "Defense comes first. Keep cash and review exits before new exposure."
     if volatility_flag == "high":
-        return "변동성이 큽니다. 시그널이 좋아도 비중은 가볍게, 진입은 나눠서."
+        return "Volatility is elevated. Reduce size and keep stop rules strict."
     if stock_score >= 50:
-        return "기회는 있지만 과열은 아닙니다. 확인 후 진입, 무리한 추격 금지."
-    return "오늘은 방어적입니다. 신호가 확실해질 때까지 기다리는 것도 실력입니다."
-
-
+        return "The setup is acceptable, but wait for price and disclosure confirmation."
+    return "Market and stock signals are weak. Observation is preferable."
 def render_card(
     title: str,
     snap: Snapshot,
@@ -2381,11 +2463,11 @@ def load_briefing_prompt_bundle() -> tuple[str, str, str | None]:
         else:
             texts.append(text)
     if missing:
-        return "", "", f"브리핑 프롬프트 파일을 읽지 못했습니다: {', '.join(missing)}"
+        return "", "", f"브리핑 시스템 파일을 찾을 수 없습니다: {', '.join(missing)}"
 
     schema_text = read_text_asset(OUTPUT_SCHEMA_FILE)
     if not schema_text:
-        return "", "", "output_schema.md를 읽지 못했습니다."
+        return "", "", "output_schema.md를 찾을 수 없습니다."
 
     system_text = "\n\n---\n\n".join(texts)
     return system_text, schema_text, None
@@ -2435,7 +2517,7 @@ def validate_briefing_output(text: str, schema_text: str) -> tuple[bool, list[st
     unsupported_action_patterns = ["무조건 매수", "확실한 상승", "반드시 상승", "원금 보장"]
     for phrase in unsupported_action_patterns:
         if phrase in cleaned:
-            errors.append(f"지원되지 않는 단정 표현 포함: {phrase}")
+            errors.append(f"지원되지 않는 확정 표현 포함: {phrase}")
     if re.search(r"\d+(?:\.\d+)?\s*%", cleaned) and "source" not in cleaned.lower() and "출처" not in cleaned:
         errors.append("숫자/비율의 출처 표시가 부족합니다.")
 
@@ -2460,14 +2542,15 @@ def format_briefing_number(value: float | None, digits: int = 2, unit: str = "",
     return f"{text}{unit}".strip()
 
 
+
 def infer_base_rate_status(snap: Snapshot | None) -> str:
     if snap is None or snap.last_close is None:
-        return "동결"
+        return "N/A"
     if snap.change is not None:
         if snap.change > 0:
-            return "인상"
+            return "상승"
         if snap.change < 0:
-            return "인하"
+            return "하락"
         return "동결"
     return "동결"
 
@@ -2497,7 +2580,6 @@ def build_briefing_user_prompt(
     ref_date: str,
 ) -> tuple[str, list[str]]:
     missing: list[str] = []
-
     kospi = snapshot.get("KOSPI")
     kosdaq = snapshot.get("KOSDAQ")
     usdkrw = snapshot.get("USD/KRW")
@@ -2524,52 +2606,43 @@ def build_briefing_user_prompt(
                 disclosure_titles.append(title)
 
     if kospi is None or kospi.last_close is None:
-        missing.append("코스피")
+        missing.append("KOSPI")
     if kosdaq is None or kosdaq.last_close is None:
-        missing.append("코스닥")
+        missing.append("KOSDAQ")
     if usdkrw is None or usdkrw.last_close is None:
-        missing.append("원달러 환율")
+        missing.append("USD/KRW")
     if fg_current is None:
-        missing.append("공포·탐욕 지수")
+        missing.append("fear_greed")
     if fg_weekly is None:
-        missing.append("공포·탐욕 지수 전주")
+        missing.append("fear_greed_weekly")
     if base_rate_snap is None or base_rate_snap.last_close is None:
-        missing.append("기준금리")
+        missing.append("base_rate")
     if kr3y is None or kr3y.last_close is None:
-        missing.append("국고채 3년")
+        missing.append("KR 3Y")
     if recent_disclosures.empty:
-        missing.append("주요 공시")
+        missing.append("recent_disclosures")
     if ecos_error:
-        missing.append("ECOS 핵심 매크로")
+        missing.append("ECOS error")
 
     base_rate_status = infer_base_rate_status(base_rate_snap)
-    disclosure_text = " / ".join(disclosure_titles) if disclosure_titles else "없음"
-    missing_text = " / ".join(missing) if missing else "없음"
+    disclosure_text = " / ".join(disclosure_titles) if disclosure_titles else "N/A"
+    missing_text = " / ".join(missing) if missing else "none"
     regime_context = build_market_regime_output(snapshot)
     quality_score, quality_status, _, quality_messages = aggregate_data_quality(snapshot, valid_rows)
     try:
         kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
     except Exception:
         kill_state = {"active": False, "reason": "ledger unavailable", "sample_size": 0, "hit_rate": None}
+
     structured_context = {
         "ref_date": ref_date,
-        "data_quality": {
-            "score": quality_score,
-            "status": quality_status,
-            "messages": quality_messages,
-        },
+        "data_quality": {"score": quality_score, "status": quality_status, "messages": quality_messages},
         "market": {
             "kospi": snapshot_to_context(kospi),
             "kosdaq": snapshot_to_context(kosdaq),
             "usdkrw": snapshot_to_context(usdkrw),
             "kr3y": snapshot_to_context(kr3y),
-            "fear_greed": {
-                "value": fg_current,
-                "weekly": fg_weekly,
-                "classification": fg_label,
-                "source": "Alternative.me",
-                "unit": "score",
-            },
+            "fear_greed": {"value": fg_current, "weekly": fg_weekly, "classification": fg_label, "source": "Alternative.me", "unit": "score"},
         },
         "regime": {
             "score": regime_context.score,
@@ -2589,32 +2662,31 @@ def build_briefing_user_prompt(
     }
 
     lines = [
-        "[입력 데이터]",
-        f"- 코스피: {format_briefing_number(safe_float(kospi.last_close) if kospi else None)} ({format_briefing_number(safe_float(kospi.change_pct) if kospi and kospi.change_pct is not None else None, 2, '%', True)})" if kospi and kospi.last_close is not None else "- 코스피: N/A (N/A)",
-        f"- 코스닥: {format_briefing_number(safe_float(kosdaq.last_close) if kosdaq else None)} ({format_briefing_number(safe_float(kosdaq.change_pct) if kosdaq and kosdaq.change_pct is not None else None, 2, '%', True)})" if kosdaq and kosdaq.last_close is not None else "- 코스닥: N/A (N/A)",
-        f"- 원달러 환율: {format_briefing_number(safe_float(usdkrw.last_close) if usdkrw else None, 2, '원')} ({format_briefing_number(safe_float(usdkrw.change) if usdkrw and usdkrw.change is not None else None, 2, '원', True)})" if usdkrw and usdkrw.last_close is not None else "- 원달러 환율: N/A (N/A)",
-        f"- 공포·탐욕 지수: {format_briefing_number(fg_current, 0)} ({fg_label}) / 전주: {format_briefing_number(fg_weekly, 0)}",
-        f"- 기준금리: {format_briefing_number(safe_float(base_rate_snap.last_close) if base_rate_snap else None, 2, '%')} ({base_rate_status})" if base_rate_snap and base_rate_snap.last_close is not None else "- 기준금리: N/A (N/A)",
-        f"- 국고채 3년: {format_briefing_number(safe_float(kr3y.last_close) if kr3y else None, 2, '%')}" if kr3y and kr3y.last_close is not None else "- 국고채 3년: N/A",
-        f"- 조회 기준일: {ref_date}",
-        f"- 주요 공시: {disclosure_text}",
-        f"- 신호 성과 경고: {'강등 활성' if kill_state.get('active') else '정상'} ({kill_state.get('reason')})",
+        "[input data]",
+        f"- KOSPI: {format_briefing_number(safe_float(kospi.last_close) if kospi else None)} ({format_briefing_number(safe_float(kospi.change_pct) if kospi and kospi.change_pct is not None else None, 2, '%', True)})" if kospi and kospi.last_close is not None else "- KOSPI: N/A (N/A)",
+        f"- KOSDAQ: {format_briefing_number(safe_float(kosdaq.last_close) if kosdaq else None)} ({format_briefing_number(safe_float(kosdaq.change_pct) if kosdaq and kosdaq.change_pct is not None else None, 2, '%', True)})" if kosdaq and kosdaq.last_close is not None else "- KOSDAQ: N/A (N/A)",
+        f"- USD/KRW: {format_briefing_number(safe_float(usdkrw.last_close) if usdkrw else None, 2, '원')} ({format_briefing_number(safe_float(usdkrw.change) if usdkrw and usdkrw.change is not None else None, 2, '원', True)})" if usdkrw and usdkrw.last_close is not None else "- USD/KRW: N/A (N/A)",
+        f"- Fear/Greed: {format_briefing_number(fg_current, 0)} ({fg_label}) / weekly: {format_briefing_number(fg_weekly, 0)}",
+        f"- Base rate: {format_briefing_number(safe_float(base_rate_snap.last_close) if base_rate_snap else None, 2, '%')} ({base_rate_status})" if base_rate_snap and base_rate_snap.last_close is not None else "- Base rate: N/A (N/A)",
+        f"- KR 3Y: {format_briefing_number(safe_float(kr3y.last_close) if kr3y else None, 2, '%')}" if kr3y and kr3y.last_close is not None else "- KR 3Y: N/A",
+        f"- Reference date: {ref_date}",
+        f"- Recent disclosures: {disclosure_text}",
+        f"- Signal outcome warning: {'active' if kill_state.get('active') else 'normal'} ({kill_state.get('reason')})",
         "",
-        "[데이터 미수신 항목]",
+        "[missing items]",
         f"- {missing_text}",
         "",
-        "[검증된 구조화 JSON context]",
+        "[validated JSON context]",
         json.dumps(structured_context, ensure_ascii=False, indent=2),
         "",
-        '출력 요청: "위 output_schema.md 형식으로 오늘의 시장 브리핑을 작성하라"',
+        "Output request: write today market briefing using output_schema.md format.",
     ]
-
     return "\n".join(lines), missing
 
 
 def call_openai_briefing(system_text: str, user_text: str) -> str:
     if not OPENAI_API_KEY or OPENAI_API_KEY == "YOUR_API_KEY":
-        raise RuntimeError("OPENAI_API_KEY가 .env 파일에 설정되어 있지 않습니다.")
+        raise RuntimeError("OPENAI_API_KEY가 .env 또는 Streamlit Secrets에 설정되어 있지 않습니다.")
 
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -2652,7 +2724,7 @@ def render_gpt_briefing_section(
 ) -> None:
     st.markdown('<div class="section-title">GPT 시장 브리핑</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="small-note">브리핑 생성 버튼을 누르면 시스템 프롬프트와 지식 파일을 읽어 오늘의 시장 브리핑을 생성합니다. 검증에 실패하면 재생성 버튼으로 다시 시도할 수 있습니다.</div>',
+        '<div class="small-note">브리핑 생성 버튼을 누르면 구조화된 데이터 컨텍스트와 지침 파일을 읽어 오늘의 시장 브리핑을 생성합니다. 검증에 실패하면 저장하지 않고 사유를 표시합니다.</div>',
         unsafe_allow_html=True,
     )
 
@@ -2677,13 +2749,13 @@ def render_gpt_briefing_section(
     with cols[1]:
         st.caption(f"조회 기준일: {ref_date}")
     with cols[2]:
-        st.caption(f"마지막 조회 시각: {last_refresh}")
+        st.caption(f"마지막 조회: {last_refresh}")
 
     if prompt_error:
         st.error(prompt_error)
 
     if generate_clicked and not prompt_error:
-        with st.spinner("분석 중..."):
+        with st.spinner("생성 중..."):
             try:
                 user_text, missing_items = build_briefing_user_prompt(snapshot, valid_rows, refresh_token, ref_date)
                 if missing_items:
@@ -2884,10 +2956,10 @@ def format_ecos_value(value: float | None, unit: str) -> str:
 
 def render_ecos_card(title: str, snap: Snapshot, subtitle: str, unit: str) -> None:
     change_pct = snap.change_pct
-    change_text = "직전 수치 없음"
+    change_text = "전기 대비 N/A"
     change_class_name = "flat"
     if change_pct is not None:
-        change_text = f"직전 수치 대비 {change_pct:+.2f}%"
+        change_text = f"전기 대비 {change_pct:+.2f}%"
         change_class_name = change_class(change_pct)
 
     value_text = format_ecos_value(safe_float(snap.last_close), unit)
@@ -2895,10 +2967,10 @@ def render_ecos_card(title: str, snap: Snapshot, subtitle: str, unit: str) -> No
     st.markdown(
         f"""
         <div class="metric-card">
-            <div class="metric-label">{title}</div>
-            <div class="metric-name">{subtitle}</div>
-            <div class="metric-value" style="color:{value_color}">{value_text}</div>
-            <div class="metric-change-{change_class_name}">{change_text}</div>
+            <div class="metric-label">{html.escape(title)}</div>
+            <div class="metric-name">{html.escape(subtitle)}</div>
+            <div class="metric-value" style="color:{value_color}">{html.escape(value_text)}</div>
+            <div class="metric-change-{change_class_name}">{html.escape(change_text)}</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2909,7 +2981,7 @@ def ecos_market_view(df: pd.DataFrame) -> tuple[list[tuple[str, Snapshot, str]],
     specs = [
         ("기준금리", ["기준금리", "base rate", "policy rate", "call rate"], "한국은행"),
         ("GDP", ["gdp", "국내총생산", "실질gdp"], "성장"),
-        ("CPI", ["cpi", "소비자물가지수", "consumer price"], "물가"),
+        ("CPI", ["cpi", "소비자물가", "consumer price"], "물가"),
         ("M2", ["m2", "광의통화"], "유동성"),
         ("무역수지", ["무역수지", "경상수지", "trade balance", "trade surplus"], "대외수지"),
     ]
@@ -2922,22 +2994,14 @@ def ecos_market_view(df: pd.DataFrame) -> tuple[list[tuple[str, Snapshot, str]],
             latest_row = snap.raw.iloc[0] if snap.raw is not None and not snap.raw.empty else None
             unit_text = _ecos_unit_from_row(latest_row) if latest_row is not None else ""
             time_text = _ecos_time_from_row(latest_row) if latest_row is not None else ""
-            subtitle = "최신 수치"
-            if time_text:
-                subtitle = time_text
-            elif subtitle_prefix:
-                subtitle = subtitle_prefix
+            subtitle = time_text or subtitle_prefix or "최신 수치"
             cards.append((title, snap, subtitle))
-            if snap.last_close is not None:
-                value_text = f"{snap.last_close:,.2f}" if abs(float(snap.last_close)) >= 1 else f"{snap.last_close:.4f}"
-                summary_bits.append(f"{title} {value_text}{(' ' + unit_text) if unit_text else ''}")
+            value_text = f"{snap.last_close:,.2f}" if abs(float(snap.last_close)) >= 1 else f"{snap.last_close:.4f}"
+            summary_bits.append(f"{title} {value_text}{(' ' + unit_text) if unit_text else ''}")
         else:
             cards.append((title, snap, "데이터 없음"))
 
-    if not summary_bits:
-        summary = "ECOS 최신 값을 불러왔습니다."
-    else:
-        summary = " / ".join(summary_bits[:3])
+    summary = " / ".join(summary_bits[:3]) if summary_bits else "ECOS 최신 값을 불러오지 못했습니다."
     return cards, summary
 
 
@@ -2954,52 +3018,28 @@ def ecos_expert_commentary(cards: list[tuple[str, Snapshot, str]]) -> str:
     m2 = value("M2")
     external = value("무역수지")
 
-    rate_view = "통화정책은 중립적" if rate is None else (
-        "금리 부담이 높은 편" if rate >= 3.0 else
-        "금리 부담이 완화된 편" if rate <= 2.0 else
-        "금리 부담이 과도하지도, 느슨하지도 않은 구간"
-    )
-    inflation_view = "물가 흐름을 확인할 수 없습니다." if cpi is None else (
-        "물가 압력이 아직 높아 긴 호흡의 공격적 매수는 신중해야 합니다." if cpi >= 118 else
-        "물가 압력이 크게 완화되지는 않았지만, 시장이 감내 가능한 구간입니다." if cpi >= 110 else
-        "물가 측면에서는 우호적인 편입니다."
-    )
-    liquidity_view = "유동성 신호를 확인할 수 없습니다." if m2 is None else (
-        "유동성은 풍부해 종목 장세가 붙기 쉬운 환경입니다." if m2 >= 4_000_000 else
-        "유동성은 나쁘지 않지만, 레버리지보다 선별이 중요합니다." if m2 >= 3_500_000 else
-        "유동성은 다소 타이트해 방어적인 운용이 유리합니다."
-    )
-    growth_view = "성장 모멘텀을 확인할 수 없습니다." if gdp is None else (
-        "성장 모멘텀이 살아 있어 실적주와 경기민감주가 힘을 받을 가능성이 있습니다." if gdp >= 90 else
-        "성장은 무난하지만, 추세가 강하게 이어지는 국면은 아닙니다."
-    )
-    external_view = "대외수지 신호를 확인할 수 없습니다." if external is None else (
-        "대외수지가 견조해 원화와 위험자산에 완충 역할을 할 수 있습니다." if external >= 0 else
-        "대외수지가 약해 환율과 외국인 수급 변동성에 주의가 필요합니다."
-    )
-
     if rate is None and gdp is None and cpi is None and m2 is None and external is None:
         return "ECOS 핵심 지표를 불러왔지만 해석 가능한 값이 충분하지 않습니다."
 
-    combined = " ".join([rate_view, growth_view, inflation_view, liquidity_view, external_view]).strip()
-    if rate is not None and cpi is not None and m2 is not None:
-        if rate >= 3.0 and cpi >= 118 and m2 >= 4_000_000:
-            stance = "이 조합이면 지수 추격매수보다 현금 일부를 남긴 선별 분할매수가 유리합니다."
-        elif rate <= 2.0 and cpi < 110 and m2 >= 4_000_000:
-            stance = "이 조합이면 위험선호가 살아 있어 주도주 중심의 공격적 분할매수가 유리합니다."
-        else:
-            stance = "지금은 공격과 방어를 반반 섞되, 강한 실적과 수급이 겹치는 종목만 고르는 편이 좋습니다."
-    else:
-        stance = "현재는 거시 방향이 완전히 한쪽으로 기울지 않아, 종목별 차별화 대응이 더 중요합니다."
-
-    return f"{combined} {stance}"
+    views: list[str] = []
+    if rate is not None:
+        views.append("금리 부담 높음" if rate >= 3.0 else "금리 부담 완화" if rate <= 2.0 else "금리 중립")
+    if cpi is not None:
+        views.append("물가 압력 높음" if cpi >= 118 else "물가 중립")
+    if m2 is not None:
+        views.append("유동성 풍부" if m2 >= 4_000_000 else "유동성 보통")
+    if gdp is not None:
+        views.append("성장 모멘텀 확인" if gdp >= 90 else "성장 모멘텀 점검")
+    if external is not None:
+        views.append("대외수지 양호" if external >= 0 else "대외수지 약세")
+    return " / ".join(views)
 
 
 def render_ecos_cards(refresh_token: int) -> None:
     ecos_df, ecos_error = load_ecos_key_statistics(refresh_token, ECOS_API_KEY)
     st.markdown('<div class="section-title">한국은행 ECOS 핵심 매크로</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="small-note">기준금리, GDP, CPI, M2, 무역수지를 한 번에 캐싱해 두고, 지금 시장의 거시 압력을 빠르게 읽습니다.</div>',
+        '<div class="small-note">기준금리, GDP, CPI, M2, 무역수지를 한 번에 캐싱해 현재 시장의 거시 압력을 빠르게 읽습니다.</div>',
         unsafe_allow_html=True,
     )
     if ecos_error:
@@ -3017,10 +3057,10 @@ def render_ecos_cards(refresh_token: int) -> None:
             render_ecos_card(title, snap, subtitle, unit_text)
     st.caption(f"거시 해석: {ecos_expert_commentary(cards)}")
 
-
 def fear_greed_zone(score: float | None) -> tuple[str, str, str]:
     band = korea_fear_greed_band(score)
     return band["label"], band["color"], band["advice"]
+
 
 
 def plot_fear_greed_bar(score: float | None, label: str, color: str) -> plt.Figure:
@@ -3032,9 +3072,10 @@ def plot_fear_greed_bar(score: float | None, label: str, color: str) -> plt.Figu
     ax.barh(0.5, 100, color="#334155", height=0.28, edgecolor="none", alpha=0.82)
 
     if score is not None:
-        ax.barh(0.5, score, color=color, height=0.28, edgecolor="none")
-        ax.scatter([score], [0.5], s=120, color=color, edgecolors="#f8fafc", linewidths=1.2, zorder=5)
-        ax.text(score, 0.88, f"{score:.0f}", ha="center", va="bottom", fontsize=11, weight="bold", color=color)
+        safe_score = max(0, min(100, float(score)))
+        ax.barh(0.5, safe_score, color=color, height=0.28, edgecolor="none")
+        ax.scatter([safe_score], [0.5], s=120, color=color, edgecolors="#f8fafc", linewidths=1.2, zorder=5)
+        ax.text(safe_score, 0.88, f"{safe_score:.0f}", ha="center", va="bottom", fontsize=11, weight="bold", color=color)
 
     bands = [
         (0, 24, "#dc2626", "극단 공포"),
@@ -3043,9 +3084,9 @@ def plot_fear_greed_bar(score: float | None, label: str, color: str) -> plt.Figu
         (56, 74, "#a3e635", "탐욕"),
         (75, 100, "#16a34a", "극단 탐욕"),
     ]
-    for start, end, band_color, text in bands:
-        ax.axvspan(start, end, color=band_color, alpha=0.10)
-        ax.text((start + end) / 2, 0.14, text, ha="center", va="center", fontsize=8.5, color="#cbd5e1")
+    for band_start, band_end, band_color, text_label in bands:
+        ax.axvspan(band_start, band_end, color=band_color, alpha=0.10)
+        ax.text((band_start + band_end) / 2, 0.14, text_label, ha="center", va="center", fontsize=8.5, color="#cbd5e1")
 
     ax.text(0, 1.08, "공포·탐욕 지수", ha="left", va="bottom", fontsize=13, weight="bold", color="#f8fafc")
     ax.text(100, 1.08, label, ha="right", va="bottom", fontsize=11, weight="bold", color=color)
@@ -3061,7 +3102,7 @@ def plot_fear_greed_bar(score: float | None, label: str, color: str) -> plt.Figu
 def render_stock_preview(name: str, code: str, snap: Snapshot, button_key: str, insight: dict[str, Any] | None = None) -> bool:
     change = snap.change
     change_pct = snap.change_pct
-    color = color_for_change(change)
+    color = color_for_change(change if change is not None else change_pct)
     change_text = "N/A"
     if change is not None and change_pct is not None:
         change_text = f"{change:+.2f} ({change_pct:+.2f}%)"
@@ -3069,6 +3110,7 @@ def render_stock_preview(name: str, code: str, snap: Snapshot, button_key: str, 
         change_text = f"{change_pct:+.2f}%"
     elif change is not None:
         change_text = f"{change:+.2f}"
+
     action = insight.get("action") if insight else None
     plan = insight.get("risk_plan") if insight else None
     disc = insight.get("disclosure_risk") if insight else None
@@ -3086,41 +3128,42 @@ def render_stock_preview(name: str, code: str, snap: Snapshot, button_key: str, 
     st.markdown(
         f"""
         <div class="metric-card">
-            <div class="metric-label">{code}</div>
-            <div class="metric-name">{name}</div>
-            <div class="metric-value" style="color:{color}">{format_price(snap.last_close)}</div>
-            <div class="metric-change-{change_class(change)}">{change_text}</div>
+            <div class="metric-label">{html.escape(code)}</div>
+            <div class="metric-name">{html.escape(name)}</div>
+            <div class="metric-value" style="color:{color}">{html.escape(format_price(snap.last_close))}</div>
+            <div class="metric-change-{change_class(change if change is not None else change_pct)}">{html.escape(change_text)}</div>
             <div class="small-note" style="margin-top:8px; line-height:1.45;">
-                판단: <b>{html.escape(action_text)}</b> / {action_score}점<br/>
-                주도력: {"N/A" if leadership is None else f"{leadership:.0f}"} · 기대값: {"N/A" if expected_edge is None else f"{expected_edge:+.2f}%"}<br/>
-                손익비: {"N/A" if rr is None else f"{rr:.2f}x"} / 품질조정 {"N/A" if qrr is None else f"{qrr:.2f}x"}<br/>
-                공시위험: {html.escape(str(disclosure_text))} · 체결품질: {"N/A" if exec_quality is None else f"{exec_quality:.0f}"}<br/>
-                최대비중: {max_pos * 100:.1f}%
+                행동 후보: <b>{html.escape(action_text)}</b> / {action_score:.0f}점<br/>
+                주도력 {"N/A" if leadership is None else f"{leadership:.0f}점"} · 기대값 {"N/A" if expected_edge is None else f"{expected_edge:+.2f}%"}<br/>
+                손익비 {"N/A" if rr is None else f"{rr:.2f}x"} · 품질조정 {"N/A" if qrr is None else f"{qrr:.2f}x"}<br/>
+                공시 위험: {html.escape(str(disclosure_text))} · 실행 품질: {"N/A" if exec_quality is None else f"{exec_quality:.0f}점"}<br/>
+                최대 검토 비중: {max_pos * 100:.1f}%
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    return st.button("상세 보기", key=button_key, use_container_width=True)
+    return st.button("종목 상세 보기", key=button_key, use_container_width=True)
 
 
 def render_signal_box(name: str, signal: str, score: float, reasons: list[str]) -> None:
-    signal_class = {
-        "매수": "signal-buy",
-        "중립": "signal-neutral",
-        "매도": "signal-sell",
-    }.get(signal, "signal-neutral")
-    display_signal = {
-        "매수": "검토 우위",
-        "중립": "관찰",
-        "매도": "리스크 관리",
-    }.get(signal, signal)
-    reasons_html = "".join(f"<div class='small-note'>- {reason}</div>" for reason in reasons)
+    normalized = str(signal).lower()
+    if any(token in normalized for token in ["buy", "매수", "보강"]):
+        signal_class = "signal-buy"
+        display_signal = "비중 보강 검토"
+    elif any(token in normalized for token in ["sell", "매도", "축소", "avoid"]):
+        signal_class = "signal-sell"
+        display_signal = "비중 축소 검토"
+    else:
+        signal_class = "signal-neutral"
+        display_signal = "관찰"
+
+    reasons_html = "".join(f"<div class='small-note'>- {html.escape(str(reason))}</div>" for reason in reasons[:5])
     st.markdown(
         f"""
         <div class="signal-box">
-            <div class="section-title" style="margin-top:0;">객관적 판단: <span class="{signal_class}">{display_signal}</span> ({score:.0f}/100)</div>
-            <div class="small-note">{name}</div>
+            <div class="section-title" style="margin-top:0;">종목 신호: <span class="{signal_class}">{display_signal}</span> ({score:.0f}/100)</div>
+            <div class="small-note">{html.escape(name)}</div>
             {reasons_html}
         </div>
         """,
@@ -3131,31 +3174,37 @@ def render_signal_box(name: str, signal: str, score: float, reasons: list[str]) 
 def build_return_figure(rows: list[dict[str, Any]], active_code: str | None) -> tuple[plt.Figure, str | None]:
     if not rows:
         fig, ax = plt.subplots(figsize=(10, 2))
+        fig.patch.set_facecolor("#0f172a")
+        ax.set_facecolor("#0f172a")
         ax.axis("off")
-        ax.text(0.5, 0.5, "표시할 종목이 없습니다.", ha="center", va="center", fontsize=12)
+        ax.text(0.5, 0.5, "표시할 수익률 데이터가 없습니다.", ha="center", va="center", fontsize=12, color="#cbd5e1")
         return fig, None
 
     df = pd.DataFrame(rows).sort_values("return_pct", ascending=True).reset_index(drop=True)
     colors = ["#dc2626" if v >= 0 else "#2563eb" for v in df["return_pct"]]
     labels = [
-        f"{name} ({code})" if code != active_code else f"▶ {name} ({code})"
+        f"{name} ({code})" if code != active_code else f"선택됨 · {name} ({code})"
         for name, code in zip(df["name"], df["code"])
     ]
 
     fig, ax = plt.subplots(figsize=(11, max(3.4, 0.42 * len(df) + 1.0)))
+    fig.patch.set_facecolor("#0f172a")
+    ax.set_facecolor("#0f172a")
     y = np.arange(len(df))
     ax.barh(y, df["return_pct"], color=colors, alpha=0.9, height=0.65)
     ax.axvline(0, color="#94a3b8", linewidth=1)
     ax.set_yticks(y)
-    ax.set_yticklabels(labels, fontsize=10)
-    ax.set_xlabel("당일 수익률(%)", fontsize=10)
-    ax.set_title("종목 당일 수익률 비교", fontsize=13, weight="bold")
-    ax.grid(axis="x", linestyle="--", alpha=0.25)
+    ax.set_yticklabels(labels, fontsize=10, color="#cbd5e1")
+    ax.set_xlabel("기간 수익률(%)", fontsize=10, color="#cbd5e1")
+    ax.set_title("관심종목 기간 수익률 비교", fontsize=13, weight="bold", color="#f8fafc")
+    ax.grid(axis="x", linestyle="--", alpha=0.25, color="#94a3b8")
     ax.set_axisbelow(True)
 
     for idx, value in enumerate(df["return_pct"]):
-        ax.text(value + (0.15 if value >= 0 else -0.15), idx, f"{value:+.2f}%", va="center", ha="left" if value >= 0 else "right", fontsize=9)
+        ax.text(value + (0.15 if value >= 0 else -0.15), idx, f"{value:+.2f}%", va="center", ha="left" if value >= 0 else "right", fontsize=9, color="#f8fafc")
 
+    for spine in ax.spines.values():
+        spine.set_color("#334155")
     fig.tight_layout()
     return fig, df.iloc[-1]["code"] if len(df) else None
 
@@ -3169,7 +3218,7 @@ def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
         fig.patch.set_facecolor("#0f172a")
         ax.set_facecolor("#0f172a")
         ax.axis("off")
-        ax.text(0.5, 0.5, "최근 60거래일 데이터가 부족합니다.", ha="center", va="center", fontsize=12, color="#cbd5e1")
+        ax.text(0.5, 0.5, "최근 60거래일 가격·거래량 데이터가 부족합니다.", ha="center", va="center", fontsize=12, color="#cbd5e1")
         return fig
 
     dates = mdates.date2num(pd.to_datetime(data.index).to_pydatetime())
@@ -3187,8 +3236,8 @@ def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
         h = float(row[high_c])
         l = float(row[low_c])
         c = float(row[close_c])
-        v = "#dc2626" if c >= o else "#2563eb"
-        ax1.vlines(dates[i], l, h, color=v, linewidth=1.1, alpha=0.9)
+        candle_color = "#dc2626" if c >= o else "#2563eb"
+        ax1.vlines(dates[i], l, h, color=candle_color, linewidth=1.1, alpha=0.9)
         body_low = min(o, c)
         body_height = max(abs(c - o), 0.01)
         ax1.add_patch(
@@ -3196,12 +3245,12 @@ def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
                 (dates[i] - width / 2, body_low),
                 width,
                 body_height,
-                facecolor=v,
-                edgecolor=v,
+                facecolor=candle_color,
+                edgecolor=candle_color,
                 alpha=0.75,
             )
         )
-        ax2.bar(dates[i], float(row[vol_c]), color=v, width=0.6, alpha=0.7)
+        ax2.bar(dates[i], float(row[vol_c]), color=candle_color, width=0.6, alpha=0.7)
 
     ax1.set_title(title, fontsize=13, weight="bold", loc="left", color="#f8fafc")
     ax1.grid(True, axis="y", linestyle="--", alpha=0.18, color="#94a3b8")
@@ -3221,7 +3270,7 @@ def plot_candlestick_with_volume(df: pd.DataFrame, title: str) -> plt.Figure:
 
 def summarize_stock(code: str, name: str, history: pd.DataFrame, kospi_close: pd.Series | None, market_score: float) -> tuple[str, float, list[str], str]:
     if history.empty:
-        return "중립", 50.0, ["데이터 없음"], "low"
+        return "관찰", 50.0, ["가격 데이터 부족"], "low"
     _, _, _, close_c, volume_c = find_ohlcv_columns(history)
     close = history[close_c].dropna()
     vol = history[volume_c].dropna() if volume_c in history.columns else pd.Series(dtype=float)
@@ -3231,69 +3280,44 @@ def summarize_stock(code: str, name: str, history: pd.DataFrame, kospi_close: pd
         ret20 = close.pct_change().dropna().tail(20)
         vol_ann = float(ret20.std() * math.sqrt(252) * 100) if not ret20.empty else 0.0
         volatility_flag = "high" if vol_ann >= 80 else "low"
-        reasons.append(f"연환산 변동성 {vol_ann:.1f}%")
+        reasons.append(f"20일 연율 변동성 {vol_ann:.1f}%")
     if len(vol) >= 20:
-        ratio = float(vol.iloc[-1] / vol.tail(20).mean())
-        reasons.append(f"거래량 비율 {ratio:.2f}x")
+        ratio = float(vol.iloc[-1] / vol.tail(20).mean()) if float(vol.tail(20).mean()) else 0.0
+        reasons.append(f"거래량 pace {ratio:.2f}x")
     return signal, score, reasons, volatility_flag
 
 
 def classify_disclosure(report_name: str) -> tuple[str, str, int]:
-    text = report_name.lower()
+    text = str(report_name or "").lower()
 
     negative_patterns = [
+        ("유상증자", 3),
+        ("감자", 3),
         ("횡령", 3),
         ("배임", 3),
-        ("영업정지", 3),
-        ("관리종목", 3),
+        ("감사의견", 3),
         ("상장폐지", 3),
-        ("부도", 3),
         ("소송", 2),
-        ("가압류", 2),
-        ("해지", 2),
-        ("감자", 3),
-        ("유상증자", 2),
-        ("cb발행", 2),
-        ("bw발행", 2),
         ("전환사채", 2),
-        ("자본잠식", 3),
-        ("적자", 1),
+        ("cb", 2),
+        ("bw", 2),
+        ("불성실", 2),
     ]
     positive_patterns = [
-        ("수주", 3),
-        ("공급계약", 3),
-        ("낙찰", 3),
-        ("매출", 2),
-        ("영업이익", 2),
-        ("당기순이익", 2),
-        ("흑자", 3),
         ("자사주", 2),
         ("배당", 2),
-        ("무상증자", 3),
-        ("합병", 2),
-        ("분할", 1),
-        ("신제품", 1),
-        ("계약체결", 2),
+        ("수주", 2),
+        ("공급계약", 2),
+        ("무상증자", 1),
+        ("실적", 1),
     ]
-
-    score = 0
-    matched: list[str] = []
-
-    for keyword, weight in positive_patterns:
-        if keyword in text:
-            score += weight
-            matched.append(keyword)
-
-    for keyword, weight in negative_patterns:
-        if keyword in text:
-            score -= weight
-            matched.append(keyword)
-
-    if score >= 2:
-        return "호재", ", ".join(matched[:3]) or "긍정 신호", score
-    if score <= -2:
-        return "악재", ", ".join(matched[:3]) or "부정 신호", score
-    return "중립", ", ".join(matched[:3]) or "특이 신호 없음", score
+    for pattern, severity in negative_patterns:
+        if pattern in text:
+            return "위험", "#f97316", severity
+    for pattern, severity in positive_patterns:
+        if pattern in text:
+            return "긍정", "#22c55e", severity
+    return "중립", "#94a3b8", 0
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -3311,16 +3335,17 @@ def insight_color(value: float | None, positive_is_good: bool = True) -> str:
     return "#dc2626" if is_good else "#2563eb"
 
 
+
 def pressure_state(score: float) -> tuple[str, str, str]:
     if score >= 68:
-        return "공격 우위", "#dc2626", "강한 종목은 눌림에서 비중을 늘리고, 약한 종목은 교체 후보로 봅니다."
+        return "위험 선호", "#dc2626", "시장 온도는 우호적입니다. 다만 추격보다 손절 기준과 분할 진입 조건을 먼저 확인합니다."
     if score >= 56:
-        return "선별 매수", "#ef4444", "상승 탄력이 있는 종목만 고르고, 추격보다 가격 구간을 기다립니다."
+        return "선별 매수", "#ef4444", "시장 여건은 양호하나 환율·금리·수급 중 일부 부담이 남아 있습니다. 강한 종목만 검토합니다."
     if score >= 44:
-        return "중립", "#64748b", "지수 방향보다 종목별 상대강도와 거래량 확인이 더 중요합니다."
+        return "중립", "#64748b", "방향성이 뚜렷하지 않습니다. 현금과 보유 포지션 점검을 병행합니다."
     if score >= 32:
-        return "방어 우위", "#2563eb", "신규 진입은 줄이고, 기존 보유 종목은 손절 기준을 먼저 확인합니다."
-    return "위험 회피", "#1d4ed8", "현금 비중과 손실 제한이 우선입니다. 반등 확인 전 선진입은 피합니다."
+        return "리스크 관리", "#2563eb", "지수·환율·금리 부담이 커졌습니다. 신규 비중 확대보다 손실 제한이 우선입니다."
+    return "강한 위험 회피", "#1d4ed8", "현금 비중과 방어 전략이 우선입니다. 반등 확인 전 선진입은 피합니다."
 
 
 def build_market_pressure(snapshot: dict[str, Snapshot]) -> tuple[float, list[dict[str, Any]], str, str, str]:
@@ -3336,7 +3361,7 @@ def build_market_pressure(snapshot: dict[str, Snapshot]) -> tuple[float, list[di
                 "raw": raw_value,
                 "text": text,
                 "contribution": contribution,
-                "color": insight_color(contribution, positive_is_good=True),
+                "color": insight_color(contribution, positive_is_good=positive_is_good),
                 "bar": clamp(abs(contribution) / 16.0 * 100.0, 4.0, 100.0),
             }
         )
@@ -3348,20 +3373,9 @@ def build_market_pressure(snapshot: dict[str, Snapshot]) -> tuple[float, list[di
     kr3y_pct = snapshot.get("KR 3Y").change_pct if snapshot.get("KR 3Y") else None
     fng = safe_float(snapshot.get("FNG").last_close) if snapshot.get("FNG") else None
 
-    if kospi_pct is not None:
-        add_row("코스피", kospi_pct, clamp(kospi_pct / 2.5 * 16.0, -16.0, 16.0), signed_pct_text(kospi_pct))
-    else:
-        add_row("코스피", None, 0.0, "N/A")
-
-    if kosdaq_pct is not None:
-        add_row("코스닥", kosdaq_pct, clamp(kosdaq_pct / 3.0 * 14.0, -14.0, 14.0), signed_pct_text(kosdaq_pct))
-    else:
-        add_row("코스닥", None, 0.0, "N/A")
-
-    if usd_pct is not None:
-        add_row("환율", usd_pct, clamp(-usd_pct / 1.0 * 12.0, -12.0, 12.0), signed_pct_text(usd_pct), positive_is_good=False)
-    else:
-        add_row("환율", None, 0.0, "N/A", positive_is_good=False)
+    add_row("코스피", kospi_pct, clamp((kospi_pct or 0.0) / 2.5 * 16.0, -16.0, 16.0), signed_pct_text(kospi_pct))
+    add_row("코스닥", kosdaq_pct, clamp((kosdaq_pct or 0.0) / 3.0 * 14.0, -14.0, 14.0), signed_pct_text(kosdaq_pct))
+    add_row("환율", usd_pct, clamp(-(usd_pct or 0.0) / 1.0 * 12.0, -12.0, 12.0), signed_pct_text(usd_pct), positive_is_good=False)
 
     rate_pct = None
     if us10y_pct is not None and kr3y_pct is not None:
@@ -3370,15 +3384,8 @@ def build_market_pressure(snapshot: dict[str, Snapshot]) -> tuple[float, list[di
         rate_pct = us10y_pct
     elif kr3y_pct is not None:
         rate_pct = kr3y_pct
-    if rate_pct is not None:
-        add_row("금리", rate_pct, clamp(-rate_pct / 1.5 * 8.0, -8.0, 8.0), signed_pct_text(rate_pct), positive_is_good=False)
-    else:
-        add_row("금리", None, 0.0, "N/A", positive_is_good=False)
-
-    if fng is not None:
-        add_row("심리", fng, clamp((fng - 50.0) / 50.0 * 10.0, -10.0, 10.0), f"{fng:.0f}/100")
-    else:
-        add_row("심리", None, 0.0, "N/A")
+    add_row("금리", rate_pct, clamp(-(rate_pct or 0.0) / 1.5 * 8.0, -8.0, 8.0), signed_pct_text(rate_pct), positive_is_good=False)
+    add_row("심리", fng, clamp(((fng if fng is not None else 50.0) - 50.0) / 50.0 * 10.0, -10.0, 10.0), "N/A" if fng is None else f"{fng:.0f}/100")
 
     score = clamp(score, 0.0, 100.0)
     label, color, thesis = pressure_state(score)
@@ -3405,10 +3412,10 @@ def render_market_pressure(snapshot: dict[str, Snapshot]) -> None:
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">1. 시장 압력</div>
-                    <div class="insight-title">한국장 압력판</div>
+                    <div class="insight-kicker">Market Pressure</div>
+                    <div class="insight-title">한국시장 압력 점수</div>
                 </div>
-                <div class="insight-badge" style="background:{color};">{label}</div>
+                <div class="insight-badge" style="background:{color};">{html.escape(label)}</div>
             </div>
             <div class="pressure-score"><strong>{score:.0f}</strong><span>/100</span></div>
             <div class="meter-track"><div class="meter-pin" style="left:calc({pin_left:.1f}% - 1.5px);"></div></div>
@@ -3435,7 +3442,7 @@ def aggregate_data_quality(snapshot: dict[str, Snapshot], valid_rows: list[dict[
     score = int(round(sum(scores) / len(scores))) if scores else 0
     status, color = quality_level(score)
     if not messages:
-        messages = ["표시 중인 핵심 데이터는 품질 검사를 통과했습니다."]
+        messages = ["표시 가능한 데이터 품질 경고가 없습니다."]
     return score, status, color, list(dict.fromkeys(messages))[:5]
 
 
@@ -3447,7 +3454,7 @@ def render_data_quality_banner(snapshot: dict[str, Snapshot], valid_rows: list[d
         <div class="quality-banner">
             <div class="quality-top">
                 <div>
-                    <div class="insight-kicker">데이터 출처 점검</div>
+                    <div class="insight-kicker">Data Integrity</div>
                     <div class="quality-score">데이터 품질 {score}/100</div>
                 </div>
                 <div class="quality-status" style="background:{color};">{html.escape(status)}</div>
@@ -3475,90 +3482,88 @@ def build_market_regime_output(snapshot: dict[str, Snapshot]) -> MarketRegimeOut
         regime = "Extreme Risk-Off"
         cash_range = (55, 80)
         max_new_exposure = 0.20
-        allowed = ["현금 확보", "손절선 점검", "주도주만 소액 관찰"]
-        prohibited = ["급락주 물타기", "거래량 없는 반등 추격", "공시 미확인 신규진입"]
+        allowed = ["현금 비중 확대", "손실 제한", "보유 종목 방어 점검"]
+        prohibited = ["추격 매수", "레버리지 확대", "손절 없는 신규 진입"]
     elif score <= 44:
         regime = "Risk-Off"
         cash_range = (40, 65)
         max_new_exposure = 0.35
-        allowed = ["주도주 1차 분할", "손익비 2.5x 이상만 검토", "방어 섹터 점검"]
-        prohibited = ["전 종목 동시 매수", "손절선 없는 진입", "고변동 종목 과대비중"]
+        allowed = ["소액 분할 검토", "손익비 2.5x 이상만 검토", "약한 종목 축소 검토"]
+        prohibited = ["근거 없는 신규 진입", "과도한 집중", "손실 확대 방치"]
     elif score <= 64:
         regime = "Neutral"
         cash_range = (20, 50)
         max_new_exposure = 0.60
-        allowed = ["종목별 선별", "리더십 상위 눌림 매수", "공시 리스크 확인"]
-        prohibited = ["무차별 추격", "손익비 2.0x 미만 진입", "섹터 과집중"]
+        allowed = ["주도주 선별", "가격 구간 확인", "리스크 플래그 점검"]
+        prohibited = ["전 종목 동시 확대", "손익비 2.0x 미만 진입", "데이터 부족 종목 추격"]
     elif score <= 79:
         regime = "Risk-On"
         cash_range = (10, 35)
         max_new_exposure = 0.80
-        allowed = ["주도주 추세추종", "상위 랭킹 분할", "수익 보호선 상향"]
-        prohibited = ["손절 완화", "과열권 신규 몰빵", "품질 낮은 데이터 기반 진입"]
+        allowed = ["주도주 눌림목 검토", "부분 비중 보강", "수익 보호 기준 설정"]
+        prohibited = ["목표가 없는 추격", "공시 리스크 무시", "단일 종목 과집중"]
     else:
-        regime = "Euphoria"
-        cash_range = (15, 45)
-        max_new_exposure = 0.45
-        allowed = ["이익 보호", "목표가 근접 종목 축소", "현금 회수 준비"]
-        prohibited = ["신규 추격매수", "레버리지 확대", "리스크 한도 초과"]
+        regime = "Euphoric"
+        cash_range = (15, 40)
+        max_new_exposure = 0.55
+        allowed = ["보유 수익 보호", "리밸런싱 검토", "신규 진입 엄격화"]
+        prohibited = ["고점 추격", "과열주 무리한 비중 확대", "현금 0% 운용"]
 
-    confidence = int(round(clamp((sum(1 for row in rows if row.get("raw") is not None) / max(len(rows), 1)) * 100, 35, 95)))
-    return MarketRegimeOutput(score, regime, cash_range, max_new_exposure, allowed, prohibited, drivers[:5] or [label], confidence, components)
+    confidence = int(round(clamp(sum(components.values()) / len(components), 0, 100))) if components else 0
+    if not drivers:
+        drivers = [f"시장 압력 {label}"]
+    return MarketRegimeOutput(score, regime, cash_range, max_new_exposure, allowed, prohibited, drivers[:4], confidence, components)
 
 
 def render_action_console(regime: MarketRegimeOutput) -> None:
-    do_html = "".join(f"<div>{idx}. {html.escape(item)}</div>" for idx, item in enumerate(regime.allowed_actions[:3], 1))
-    dont_html = "".join(f"<div>{idx}. {html.escape(item)}</div>" for idx, item in enumerate(regime.prohibited_actions[:3], 1))
+    allowed = "".join(f"<li>{html.escape(item)}</li>" for item in regime.allowed_actions[:4])
+    prohibited = "".join(f"<li>{html.escape(item)}</li>" for item in regime.prohibited_actions[:4])
     st.html(
         f"""
         <div class="action-console">
-            <div class="action-panel">
-                <strong>오늘의 행동 · {html.escape(regime_label_ko(regime.regime))} / {regime.score}점</strong>
-                {do_html}
+            <div>
+                <div class="insight-kicker">오늘의 운용 범위</div>
+                <div class="section-title" style="margin-top:0;">{html.escape(regime_label_ko(regime.regime))} · 현금 {regime.recommended_cash_range[0]}~{regime.recommended_cash_range[1]}%</div>
+                <div class="small-note">신규 노출 한도 {regime.max_new_exposure * 100:.0f}% · 신뢰도 {regime.confidence}/100</div>
             </div>
-            <div class="action-panel">
-                <strong>오늘 금지 · 현금 권장 {regime.recommended_cash_range[0]}~{regime.recommended_cash_range[1]}%</strong>
-                {dont_html}
+            <div class="action-columns">
+                <div><strong>검토 가능</strong><ul>{allowed}</ul></div>
+                <div><strong>금지 행동</strong><ul>{prohibited}</ul></div>
             </div>
         </div>
         """
     )
 
 
-def _compact_text(items: list[str], fallback: str = "특이사항 없음", limit: int = 2) -> str:
-    cleaned = [clean_text(str(item)) for item in items if clean_text(str(item))]
-    return " / ".join(cleaned[:limit]) if cleaned else fallback
+def _compact_text(items: list[str], fallback: str = "표시할 내용 없음", limit: int = 2) -> str:
+    clean_items = [str(item) for item in items if str(item).strip()]
+    return " · ".join(clean_items[:limit]) if clean_items else fallback
 
 
 def _portfolio_stance(regime: MarketRegimeOutput, leader_action: ActionDecision | None, exec_quality: float | None) -> tuple[str, str, str]:
-    action_score = leader_action.score if isinstance(leader_action, ActionDecision) else 0
-    if regime.score <= 34:
+    action_score = leader_action.score if leader_action else 50
+    blockers = len(leader_action.blockers) if leader_action else 0
+    if regime.score <= 35 or blockers >= 2:
         return (
-            "방어 우선",
-            "현금과 손실 제한이 최우선입니다. 신규 진입은 중단하거나 최상위 종목만 아주 작게 관찰합니다.",
+            "리스크 관리 우선",
+            "시장 압력 또는 종목 리스크가 높습니다. 신규 비중 확대보다 손실 제한과 현금 관리가 우선입니다.",
             "#2563eb",
         )
-    if regime.score <= 44:
+    if action_score >= 72 and (exec_quality is None or exec_quality >= 50):
         return (
-            "선별 방어",
-            "시장 압력이 남아 있습니다. 추격 매수보다 현금 비중 유지와 손절 기준 점검이 우선입니다.",
-            "#64748b",
-        )
-    if action_score >= 65 and (exec_quality is None or exec_quality >= 45):
-        return (
-            "선별 매수 가능",
-            "시장과 종목 조건이 일부 맞습니다. 최상위 종목만 가격 구간과 체결비용을 확인한 뒤 분할 접근합니다.",
+            "선별 비중 보강 검토",
+            "시장과 종목 신호가 비교적 정렬되어 있습니다. 가격 구간, 손절 기준, 공시 리스크를 확인한 뒤 분할 검토합니다.",
             "#dc2626",
         )
     if regime.score >= 65:
         return (
-            "공격 준비",
-            "시장 환경은 우호적입니다. 다만 종목별 손익비와 체결 품질이 확인된 후보만 비중을 싣습니다.",
-            "#dc2626",
+            "주도주 관찰",
+            "시장 환경은 우호적입니다. 다만 기대값과 손익비가 확인된 종목만 검토합니다.",
+            "#ef4444",
         )
     return (
-        "관망 우위",
-        "기회는 있지만 우위가 압도적이지 않습니다. 오늘은 랭킹 상위와 무효화 조건을 확인하는 날입니다.",
+        "중립 관찰",
+        "결정적 우위가 충분하지 않습니다. 포지션은 유지하되 새로운 노출은 근거가 쌓일 때만 검토합니다.",
         "#64748b",
     )
 
@@ -3579,7 +3584,7 @@ def render_executive_decision_report(
     exec_quality = safe_float(getattr(leader_exec, "execution_quality_score", None))
     leader_name = str(leader.get("name")) if leader else "후보 없음"
     leader_code = str(leader.get("code")) if leader else "-"
-    leader_signal = action_label_ko(leader_action.action) if leader_action else "관찰만"
+    leader_signal = action_label_ko(leader_action.action) if leader_action else "관찰"
     leader_score = leader_action.score if leader_action else safe_float(leader.get("score") if leader else None)
     leader_score_text = "N/A" if leader_score is None else f"{leader_score:.0f}점"
     rr = safe_float(leader_plan.get("rr")) if leader_plan else None
@@ -3599,9 +3604,9 @@ def render_executive_decision_report(
 
     stance, conclusion, stance_color = _portfolio_stance(regime, leader_action, exec_quality)
     if kill_state.get("active"):
-        stance = "신호 강등"
+        stance = "검증 보류"
         stance_color = "#2563eb"
-        conclusion = "최근 저장 신호 성과가 악화되었습니다. 신규 매수 판단은 자동으로 낮춰 보고, 검증된 후보만 소액으로 제한합니다."
+        conclusion = "최근 신호 성과 저하가 감지되어 신규 신호 신뢰도를 낮춥니다. 보유 위험 점검과 사후 검증이 우선입니다."
 
     market_tile = f"{regime_label_ko(regime.regime)} · {regime.score}점"
     cash_tile = f"{regime.recommended_cash_range[0]}~{regime.recommended_cash_range[1]}%"
@@ -3611,10 +3616,10 @@ def render_executive_decision_report(
     exec_text = "N/A" if exec_quality is None else f"{exec_quality:.0f}/100"
     stop_text = format_price(active_plan.get("stop"))
     tp_text = format_price(getattr(exit_plan, "first_take_profit", None))
-    invalidation = _compact_text(getattr(exit_plan, "invalidation_rules", []), "손절 기준과 공시 리스크 확인", 2)
+    invalidation = _compact_text(getattr(exit_plan, "invalidation_rules", []), "손절·무효화 기준 확인 필요", 2)
     drivers = _compact_text(regime.primary_drivers, "시장 압력 중립", 3)
     data_msg = _compact_text(quality_messages, quality_status, 2)
-    blocker_text = _compact_text(leader_action.blockers if leader_action else [], "차단 조건 없음", 2)
+    blocker_text = _compact_text(leader_action.blockers if leader_action else [], "차단 요인 없음", 2)
 
     st.html(
         f"""
@@ -3622,7 +3627,7 @@ def render_executive_decision_report(
             <div class="decision-head">
                 <div>
                     <div class="insight-kicker">Executive Decision Report</div>
-                    <div class="decision-title">오늘의 투자 결론</div>
+                    <div class="decision-title">오늘의 투자 판단 요약</div>
                 </div>
                 <div class="insight-badge" style="background:{stance_color};">{html.escape(stance)}</div>
             </div>
@@ -3634,18 +3639,18 @@ def render_executive_decision_report(
                     <span>현금 권장 {html.escape(cash_tile)} · {html.escape(drivers)}</span>
                 </div>
                 <div class="decision-tile">
-                    <small>최상위 후보</small>
+                    <small>관심 우선 후보</small>
                     <strong>{html.escape(leader_tile)}</strong>
-                    <span>{html.escape(leader_signal)} · {html.escape(leader_score_text)} · 최대 {max_position * 100:.1f}%</span>
+                    <span>{html.escape(leader_signal)} · {html.escape(leader_score_text)} · 최대 검토 {max_position * 100:.1f}%</span>
                 </div>
                 <div class="decision-tile">
                     <small>수익/비용</small>
                     <strong>기대값 {html.escape(edge_text)} · 손익비 {html.escape(rr_text)}</strong>
-                    <span>체결 품질 {html.escape(exec_text)} · {html.escape(blocker_text)}</span>
+                    <span>실행 품질 {html.escape(exec_text)} · {html.escape(blocker_text)}</span>
                 </div>
                 <div class="decision-tile">
-                    <small>무효화/청산</small>
-                    <strong>손절 {html.escape(stop_text)} · 1차익절 {html.escape(tp_text)}</strong>
+                    <small>리스크 기준</small>
+                    <strong>손절 {html.escape(stop_text)} · 1차 목표 {html.escape(tp_text)}</strong>
                     <span>{html.escape(invalidation)}</span>
                 </div>
             </div>
@@ -3655,35 +3660,36 @@ def render_executive_decision_report(
     )
 
 
+
 def disclosure_severity(report_name: str) -> tuple[str, int, str]:
     text = clean_text(report_name).lower()
-    critical = ["횡령", "배임", "상장폐지", "감사의견거절", "의견거절", "부도", "자본잠식"]
-    high = ["감자", "유상증자", "전환사채", "cb", "bw", "영업정지", "소송", "관리종목"]
-    medium = ["최대주주", "불성실", "단기차입", "담보제공", "해지"]
-    positive = ["자사주", "소각", "배당", "공급계약", "수주", "흑자전환"]
+    critical = ["감자", "상장폐지", "횡령", "배임", "감사의견", "거절", "부적정"]
+    high = ["유상증자", "전환사채", "신주인수권", "cb", "bw", "소송", "불성실", "관리종목"]
+    medium = ["최대주주", "담보제공", "정정", "조회공시", "투자주의"]
+    positive = ["자사주", "배당", "수주", "공급계약", "무상증자", "실적개선"]
     if any(keyword in text for keyword in critical):
-        return "Critical", 100, "치명적 공시 리스크"
+        return "Critical", 100, "신규 검토 차단이 필요한 중대 공시"
     if any(keyword in text for keyword in high):
-        return "High", 25, "신규매수 금지 수준"
+        return "High", 25, "신규 비중 확대 전 확인이 필요한 공시"
     if any(keyword in text for keyword in medium):
-        return "Medium", 8, "비중 제한 필요"
+        return "Medium", 8, "리스크 확인이 필요한 공시"
     if any(keyword in text for keyword in positive):
-        return "Low", -2, "긍정/중립 이벤트"
-    return "Low", 0, "특이 리스크 낮음"
+        return "Low", -2, "긍정 또는 중립 가능성이 있는 공시"
+    return "Low", 0, "특이 위험 공시 없음"
 
 
 def disclosure_risk_for_stock(code: str, name: str, disclosures: pd.DataFrame) -> dict[str, Any]:
     if disclosures is None or disclosures.empty:
-        return {"severity": "Low", "penalty": 0, "count": 0, "summary": "최근 중요 공시 없음"}
+        return {"severity": "Low", "penalty": 0, "count": 0, "summary": "최근 연결 공시 없음"}
     mask = pd.Series(False, index=disclosures.index)
     if "stock_code" in disclosures.columns:
         mask = mask | disclosures["stock_code"].astype(str).str.zfill(6).eq(code)
-    if "corp_name" in disclosures.columns:
+    if "corp_name" in disclosures.columns and name:
         mask = mask | disclosures["corp_name"].astype(str).str.contains(re.escape(name), na=False)
     subset = disclosures[mask].head(20)
     if subset.empty:
-        return {"severity": "Low", "penalty": 0, "count": 0, "summary": "최근 중요 공시 없음"}
-    best = {"severity": "Low", "penalty": 0, "count": len(subset), "summary": "특이 리스크 낮음"}
+        return {"severity": "Low", "penalty": 0, "count": 0, "summary": "최근 연결 공시 없음"}
+    best = {"severity": "Low", "penalty": 0, "count": len(subset), "summary": "특이 위험 공시 없음"}
     severity_rank = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
     for _, row in subset.iterrows():
         severity, penalty, reason = disclosure_severity(str(row.get("report_name", "")))
@@ -3707,7 +3713,8 @@ def expected_edge_from_plan(plan: dict[str, Any], leadership_score: float, regim
     cost = RISK_DEFAULTS["trading_cost_pct"] + RISK_DEFAULTS["slippage_pct"]
     expected_edge = p_win * upside_pct - (1.0 - p_win) * risk_pct - cost
     regime_factor = 0.55 if regime.regime == "Extreme Risk-Off" else 0.75 if regime.regime == "Risk-Off" else 1.0 if regime.regime == "Neutral" else 1.08
-    event_factor = 0.0 if disclosure_risk["severity"] == "Critical" else 0.55 if disclosure_risk["severity"] == "High" else 0.82 if disclosure_risk["severity"] == "Medium" else 1.0
+    severity = str(disclosure_risk.get("severity", "Low"))
+    event_factor = 0.0 if severity == "Critical" else 0.55 if severity == "High" else 0.82 if severity == "Medium" else 1.0
     confidence = clamp((leadership_score * 0.45 + regime.confidence * 0.25 + 60 * 0.30), 20, 90)
     quality_adjusted_rr = raw_rr * (confidence / 100.0) * regime_factor * event_factor
     return expected_edge, quality_adjusted_rr, confidence
@@ -3746,24 +3753,26 @@ def build_action_decision(
             expected_edge -= execution_cost_pct
         if quality_adjusted_rr is not None:
             quality_adjusted_rr *= clamp(1.0 - execution_cost_pct / 5.0, 0.45, 1.0)
+
     raw_rr = safe_float(plan.get("rr"))
     blockers: list[str] = []
+    severity = str(disclosure_risk.get("severity", "Low"))
     if data_quality < 70:
         blockers.append("데이터 품질 낮음")
-    if disclosure_risk["severity"] in {"High", "Critical"}:
-        blockers.append(f"공시 리스크 {severity_label_ko(disclosure_risk['severity'])}")
+    if severity in {"High", "Critical"}:
+        blockers.append(f"공시 위험 {severity_label_ko(severity)}")
     if execution_cost_pct is not None and expected_edge is not None and expected_edge <= 0:
-        blockers.append("체결비용 반영 후 기대값 부족")
+        blockers.append("실행 비용 반영 후 기대값 부족")
     if raw_rr is None or raw_rr < RISK_DEFAULTS["min_raw_rr"]:
-        blockers.append("기본 손익비 미달")
+        blockers.append("기본 손익비 부족")
     if quality_adjusted_rr is None or quality_adjusted_rr < RISK_DEFAULTS["min_quality_adjusted_rr"]:
-        blockers.append("품질조정 손익비 미달")
+        blockers.append("품질조정 손익비 부족")
     if expected_edge is None or expected_edge <= 0:
-        blockers.append("기대값 음수/불명확")
+        blockers.append("기대값 검증 필요")
     if regime.regime == "Extreme Risk-Off" and (raw_rr is None or raw_rr < RISK_DEFAULTS["extreme_risk_off_min_rr"]):
-        blockers.append("극단 방어장 예외 조건 미달")
+        blockers.append("극단 리스크오프 기준 미달")
     if kill_switch_active:
-        blockers.append("성과 저하 kill-switch")
+        blockers.append("신호 성과 kill-switch")
 
     edge_score = 50 if expected_edge is None else clamp(50 + expected_edge * 12, 0, 100)
     rr_score = 50 if quality_adjusted_rr is None else clamp(quality_adjusted_rr / 3.0 * 100, 0, 100)
@@ -3779,35 +3788,42 @@ def build_action_decision(
         - event_penalty
         - len(blockers) * 4
     )
-    if blockers:
-        score = min(score, 64)
+    if severity == "Critical":
+        score = min(score, 25)
     if kill_switch_active:
-        score = min(score, 54)
+        score = min(score, 45)
     score = int(round(clamp(score, 0, 100)))
 
-    risk_pct = safe_float(plan.get("risk_pct"))
-    max_position = RISK_DEFAULTS["max_position_pct"]
-    if risk_pct is not None and risk_pct > 0:
-        max_position = min(max_position, RISK_DEFAULTS["risk_per_trade_pct"] / (risk_pct / 100.0))
-    max_position = min(max_position, regime.max_new_exposure)
-    if regime.regime == "Extreme Risk-Off":
-        max_position *= 0.35
-    elif regime.regime == "Risk-Off":
-        max_position *= 0.60
     if blockers:
-        max_position = 0.0 if disclosure_risk["severity"] in {"High", "Critical"} else min(max_position, 0.03)
-    if kill_switch_active:
-        max_position = min(max_position, 0.02)
+        if severity == "Critical" or score < 35:
+            label = "Sell / Avoid"
+        elif score < 55:
+            label = "Watch Only"
+        else:
+            label = "Hold / Watch"
+    else:
+        label = action_label(score)
+
+    base_max = min(regime.max_new_exposure, RISK_DEFAULTS["max_position_pct"])
+    if raw_rr is not None and raw_rr >= 3:
+        base_max *= 1.15
+    if severity in {"Medium", "High"}:
+        base_max *= 0.55
+    if severity == "Critical" or kill_switch_active:
+        base_max = 0.0
+    max_position_pct = clamp(base_max, 0.0, RISK_DEFAULTS["max_position_pct"])
 
     reasons = [
-        f"시장 국면 {regime_label_ko(regime.regime)} {regime.score}점",
+        f"시장 국면 {regime_label_ko(regime.regime)}({regime.score}점)",
         f"주도력 {leadership_score:.0f}점",
-        f"기대값 {'N/A' if expected_edge is None else f'{expected_edge:+.2f}%'}",
-        f"품질조정 손익비 {'N/A' if quality_adjusted_rr is None else f'{quality_adjusted_rr:.2f}x'}",
+        f"데이터 품질 {data_quality}점",
     ]
-    if execution_cost_bps is not None:
-        reasons.append(f"체결비용 {execution_cost_bps:.1f}bp 반영")
-    return ActionDecision(action_label(score), score, expected_edge, quality_adjusted_rr, max_position, reasons, blockers)
+    if expected_edge is not None:
+        reasons.append(f"기대값 {expected_edge:+.2f}%")
+    if quality_adjusted_rr is not None:
+        reasons.append(f"품질조정 손익비 {quality_adjusted_rr:.2f}x")
+
+    return ActionDecision(label, score, expected_edge, quality_adjusted_rr, max_position_pct, reasons, blockers)
 
 
 def snapshot_quality_for_stock(code: str, name: str, history: pd.DataFrame) -> int:
@@ -3922,6 +3938,7 @@ def build_watchlist_insights(
     return sorted(rows, key=lambda row: (row["score"], row["rs"] if row["rs"] is not None else -999.0), reverse=True)
 
 
+
 def render_watchlist_ranking(rows: list[dict[str, Any]]) -> None:
     visible = rows[:7]
     rank_html = [
@@ -3929,15 +3946,15 @@ def render_watchlist_ranking(rows: list[dict[str, Any]]) -> None:
         <div class="rank-row" style="border-top:0; padding-top:0;">
             <div class="rank-header">#</div>
             <div class="rank-header">종목</div>
-            <div class="rank-header">판단</div>
-            <div class="rank-header">당일</div>
+            <div class="rank-header">행동 후보</div>
+            <div class="rank-header">1일</div>
             <div class="rank-header">기대값</div>
-            <div class="rank-header">최대비중</div>
+            <div class="rank-header">최대 비중</div>
         </div>
         """
     ]
     if not visible:
-        rank_html.append('<div class="thesis">표시할 관심 종목 데이터가 없습니다.</div>')
+        rank_html.append('<div class="thesis">표시할 관심종목 데이터가 없습니다.</div>')
     for idx, row in enumerate(visible, 1):
         score = safe_float(row.get("score")) or 0.0
         score_color = "#dc2626" if score >= 65 else "#2563eb" if score <= 44 else "#64748b"
@@ -3946,13 +3963,14 @@ def render_watchlist_ranking(rows: list[dict[str, Any]]) -> None:
         expected_edge = action.expected_edge if isinstance(action, ActionDecision) else None
         max_position = action.max_position_pct if isinstance(action, ActionDecision) else 0.0
         blockers = action.blockers if isinstance(action, ActionDecision) else []
-        blocker_text = " · 차단 " + str(len(blockers)) if blockers else ""
+        blocker_text = f" · 차단 {len(blockers)}" if blockers else ""
         action_text = action_label_ko(str(row.get("signal")))
+        leader_score = safe_float(row.get("leadership_score")) or 0.0
         rank_html.append(
             f"""
             <div class="rank-row">
                 <div class="row-label">{idx}</div>
-                <div class="rank-name"><strong>{html.escape(str(row["name"]))}</strong><span>{html.escape(str(row["code"]))} · 주도 {safe_float(row.get("leadership_score")) or 0:.0f}{html.escape(blocker_text)}</span></div>
+                <div class="rank-name"><strong>{html.escape(str(row["name"]))}</strong><span>{html.escape(str(row["code"]))} · 주도력 {leader_score:.0f}{html.escape(blocker_text)}</span></div>
                 <div class="row-value" style="color:{score_color};">{html.escape(action_text)}<br>{score:.0f}점</div>
                 <div class="row-value" style="color:{insight_color(r1)};">{signed_pct_text(r1)}</div>
                 <div class="row-value" style="color:{insight_color(expected_edge)};">{"N/A" if expected_edge is None else f"{expected_edge:+.2f}%"}</div>
@@ -3961,19 +3979,19 @@ def render_watchlist_ranking(rows: list[dict[str, Any]]) -> None:
             """
         )
 
-    thesis = "상위 종목일수록 추세, 상대강도, 거래량이 동시에 우위입니다."
+    thesis = "관심종목은 점수, 기대값, 공시 위험, 실행 비용을 함께 본 검토 우선순위입니다."
     if visible:
         leader = visible[0]
-        thesis = f"현재 관심목록 최상위는 {leader['name']}입니다. 점수는 {safe_float(leader['score']) or 0:.0f}점이며, 추격보다 가격 구간 확인이 우선입니다."
+        thesis = f"현재 최상위 검토 후보는 {leader['name']}입니다. 점수는 {safe_float(leader['score']) or 0:.0f}점이며, 추격보다 가격 구간 확인이 우선입니다."
     st.html(
         f"""
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">2. 주도주</div>
+                    <div class="insight-kicker">Watchlist Priority</div>
                     <div class="insight-title">관심종목 우선순위</div>
                 </div>
-                <div class="insight-badge" style="background:#0f766e;">상대강도</div>
+                <div class="insight-badge" style="background:#0f766e;">검토 후보</div>
             </div>
             {''.join(rank_html)}
             <div class="thesis">{html.escape(thesis)}</div>
@@ -3996,7 +4014,7 @@ def risk_plan_for_stock(code: str, name: str, history: pd.DataFrame) -> dict[str
         "rr": None,
         "label": "데이터 부족",
         "color": "#64748b",
-        "thesis": "가격 구간을 계산할 데이터가 부족합니다.",
+        "thesis": "가격 데이터가 부족해 손절·목표·손익비를 계산할 수 없습니다.",
     }
     if history is None or history.empty:
         return empty
@@ -4028,14 +4046,14 @@ def risk_plan_for_stock(code: str, name: str, history: pd.DataFrame) -> dict[str
         rr = upside_pct / risk_pct
 
     if rr is not None and rr >= 1.7 and upside_pct is not None and upside_pct > 0:
-        label, color = "손익비 우위", "#dc2626"
-        thesis = "상단 여지가 위험폭보다 큽니다. 진입은 구간 하단에서 나눠 보는 편이 유리합니다."
+        label, color = "손익비 양호", "#dc2626"
+        thesis = "목표 대비 손절폭이 비교적 작습니다. 다만 진입 가격과 무효화 기준 확인이 먼저입니다."
     elif rr is not None and rr < 0.8:
-        label, color = "손익비 열위", "#2563eb"
-        thesis = "상승 여지보다 손실 폭이 큽니다. 매수보다 관망 또는 가격 재조정 확인이 먼저입니다."
+        label, color = "손익비 부족", "#2563eb"
+        thesis = "기대 상승 여력보다 하방 위험이 큽니다. 신규 검토보다 관찰 또는 리스크 축소가 우선입니다."
     else:
-        label, color = "구간 확인", "#64748b"
-        thesis = "방향은 열려 있지만 우위가 압도적이지 않습니다. 돌파나 눌림 확인이 필요합니다."
+        label, color = "가격 구간 확인", "#64748b"
+        thesis = "손익비가 중립 구간입니다. 거래량, 추세, 공시 리스크를 함께 확인합니다."
 
     return {
         "code": code,
@@ -4056,48 +4074,48 @@ def risk_plan_for_stock(code: str, name: str, history: pd.DataFrame) -> dict[str
 
 def render_risk_plan(active_code: str | None, code_to_name: dict[str, str], refresh_token: int, action: ActionDecision | None = None) -> None:
     if active_code is None:
-        plan = risk_plan_for_stock("", "선택 종목", pd.DataFrame())
+        plan = risk_plan_for_stock("", "선택 종목 없음", pd.DataFrame())
     else:
         active_name = code_to_name.get(active_code, STOCK_UNIVERSE_NAME_HINTS.get(active_code, active_code))
         plan = risk_plan_for_stock(active_code, active_name, load_symbol_history(active_code, refresh_token, periods=240))
 
     value_rows = [
         ("현재가", format_price(plan["latest"])),
-        ("진입 구간", "N/A" if plan["entry_low"] is None or plan["entry_high"] is None else f"{format_price(plan['entry_low'])} ~ {format_price(plan['entry_high'])}"),
+        ("검토 가격대", "N/A" if plan["entry_low"] is None or plan["entry_high"] is None else f"{format_price(plan['entry_low'])} ~ {format_price(plan['entry_high'])}"),
         ("손절 기준", format_price(plan["stop"])),
-        ("상단 기준", format_price(plan["resistance"])),
-        ("위험폭", "N/A" if plan["risk_pct"] is None else f"{plan['risk_pct']:.2f}%"),
-        ("상승 여지", "N/A" if plan["upside_pct"] is None else f"{plan['upside_pct']:+.2f}%"),
+        ("저항/목표", format_price(plan["resistance"])),
+        ("하방위험", "N/A" if plan["risk_pct"] is None else f"{plan['risk_pct']:.2f}%"),
+        ("상승여력", "N/A" if plan["upside_pct"] is None else f"{plan['upside_pct']:+.2f}%"),
         ("손익비", "N/A" if plan["rr"] is None else f"{plan['rr']:.2f}x"),
         ("기대값", "N/A" if action is None or action.expected_edge is None else f"{action.expected_edge:+.2f}%"),
         ("품질조정 R/R", "N/A" if action is None or action.quality_adjusted_rr is None else f"{action.quality_adjusted_rr:.2f}x"),
-        ("최대 비중", "N/A" if action is None else f"{action.max_position_pct * 100:.1f}%"),
+        ("최대 검토 비중", "N/A" if action is None else f"{action.max_position_pct * 100:.1f}%"),
     ]
     row_html = "".join(
         f"""
-        <div class="risk-row">
+        <div class="signal-row">
             <div class="row-label">{html.escape(label)}</div>
             <div class="row-value">{html.escape(value)}</div>
         </div>
         """
         for label, value in value_rows
     )
-    title = f"{plan['name']} · {plan['code']}" if plan["code"] else plan["name"]
     st.html(
         f"""
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">3. 손익비</div>
-                    <div class="insight-title">{html.escape(title)}</div>
+                    <div class="insight-kicker">Risk / Reward</div>
+                    <div class="insight-title">손익비와 포지션 기준</div>
                 </div>
-                <div class="insight-badge" style="background:{plan['color']};">{html.escape(action_label_ko(action.action) if action else plan['label'])}</div>
+                <div class="insight-badge" style="background:{plan["color"]};">{html.escape(plan["label"])}</div>
             </div>
             {row_html}
             <div class="thesis">{html.escape(plan["thesis"])}</div>
         </div>
         """
     )
+
 
 
 def _format_bps(value: float | None) -> str:
@@ -4109,14 +4127,14 @@ def _format_krw(value: float | None) -> str:
 
 
 def render_execution_card(exec_plan: Any, expected_edge: float | None = None) -> None:
-    warning_lines = []
+    warning_lines: list[str] = []
     if getattr(exec_plan, "unavailable_fields", None):
         warning_lines.append("unavailable: " + ", ".join(exec_plan.unavailable_fields[:4]))
     if getattr(exec_plan, "warnings", None):
         warning_lines.extend(exec_plan.warnings[:3])
     if should_block_for_execution(exec_plan, expected_edge):
-        warning_lines.append("체결비용 대비 기대값이 부족해 신규 진입 제한")
-    warnings_html = "".join(f"<div>{idx}. {html.escape(str(text))}</div>" for idx, text in enumerate(warning_lines, 1)) or "<div>특이 경고 없음</div>"
+        warning_lines.append("실행 비용 또는 유동성 때문에 신규 검토를 보류합니다.")
+    warnings_html = "".join(f"<div>{idx}. {html.escape(str(text))}</div>" for idx, text in enumerate(warning_lines, 1)) or "<div>주요 실행 경고 없음</div>"
     row_html = "".join(
         f"""
         <div class="risk-row">
@@ -4125,14 +4143,14 @@ def render_execution_card(exec_plan: Any, expected_edge: float | None = None) ->
         </div>
         """
         for label, value in [
-            ("체결품질", f"{getattr(exec_plan, 'execution_quality_score', 0):.0f}/100"),
+            ("실행 품질", f"{getattr(exec_plan, 'execution_quality_score', 0):.0f}/100"),
             ("유동성", f"{getattr(exec_plan, 'liquidity_score', 0):.0f}/100"),
-            ("총 비용", _format_bps(getattr(exec_plan, "total_execution_cost_bps", None))),
+            ("총 예상 비용", _format_bps(getattr(exec_plan, "total_execution_cost_bps", None))),
             ("슬리피지", _format_bps(getattr(exec_plan, "estimated_slippage_bps", None))),
             ("시장충격", _format_bps(getattr(exec_plan, "estimated_market_impact_bps", None))),
-            ("무충격 한도", _format_krw(getattr(exec_plan, "max_order_value_without_impact", None))),
-            ("주문 방식", str(getattr(exec_plan, "recommended_order_style", "대기"))),
-            ("분할 수", str(getattr(exec_plan, "recommended_slices", 0))),
+            ("영향 적은 주문금액", _format_krw(getattr(exec_plan, "max_order_value_without_impact", None))),
+            ("권장 주문 방식", str(getattr(exec_plan, "recommended_order_style", "보류"))),
+            ("분할 횟수", str(getattr(exec_plan, "recommended_slices", 0))),
         ]
     )
     quality = safe_float(getattr(exec_plan, "execution_quality_score", 0)) or 0
@@ -4142,8 +4160,8 @@ def render_execution_card(exec_plan: Any, expected_edge: float | None = None) ->
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">체결 품질</div>
-                    <div class="insight-title">Execution Quality</div>
+                    <div class="insight-kicker">Execution Quality</div>
+                    <div class="insight-title">실행 품질</div>
                 </div>
                 <div class="insight-badge" style="background:{color};">{quality:.0f}점</div>
             </div>
@@ -4164,27 +4182,27 @@ def render_exit_plan_card(exit_plan: Any) -> None:
         """
         for label, value in [
             ("초기 손절", format_price(getattr(exit_plan, "initial_stop", None))),
-            ("Hard stop", format_price(getattr(exit_plan, "hard_stop", None))),
-            ("Trailing", format_price(getattr(exit_plan, "trailing_stop", None))),
-            ("1차 익절", format_price(getattr(exit_plan, "first_take_profit", None))),
-            ("2차 익절", format_price(getattr(exit_plan, "second_take_profit", None))),
+            ("최종 손절", format_price(getattr(exit_plan, "hard_stop", None))),
+            ("트레일링", format_price(getattr(exit_plan, "trailing_stop", None))),
+            ("1차 목표", format_price(getattr(exit_plan, "first_take_profit", None))),
+            ("2차 목표", format_price(getattr(exit_plan, "second_take_profit", None))),
             ("시간 손절", str(getattr(exit_plan, "time_stop_date", "unavailable"))),
-            ("Runner", f"{getattr(exit_plan, 'runner_position_pct', 0) * 100:.0f}%"),
+            ("잔여 러너", f"{getattr(exit_plan, 'runner_position_pct', 0) * 100:.0f}%"),
             ("신뢰도", f"{getattr(exit_plan, 'exit_confidence', 0):.0f}/100"),
         ]
     )
     invalidation = getattr(exit_plan, "invalidation_rules", []) or []
     warnings = getattr(exit_plan, "warnings", []) or []
-    thesis = " / ".join([*invalidation[:2], *warnings[:2]]) or "현재 청산 규칙은 정상 계산되었습니다."
-    status = str(getattr(exit_plan, "status", "계산 불가"))
-    color = "#dc2626" if "수익" in status or "러너" in status else "#64748b" if "위험" in status else "#2563eb"
+    thesis = " / ".join([*invalidation[:2], *warnings[:2]]) or "현재 기준에서는 청산 규칙을 계속 점검합니다."
+    status = str(getattr(exit_plan, "status", "점검 필요"))
+    color = "#dc2626" if "수익" in status or "보호" in status else "#64748b" if "관찰" in status else "#2563eb"
     st.html(
         f"""
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">청산 계획</div>
-                    <div class="insight-title">Dynamic Exit Plan</div>
+                    <div class="insight-kicker">Dynamic Exit Plan</div>
+                    <div class="insight-title">청산 계획</div>
                 </div>
                 <div class="insight-badge" style="background:{color};">{html.escape(status)}</div>
             </div>
@@ -4217,7 +4235,7 @@ def render_investment_insight_panels(
     render_executive_decision_report(snapshot, valid_rows, code_to_name, refresh_token, regime_output, rank_rows)
     render_portfolio_intelligence_section(snapshot, code_to_name, refresh_token)
     render_korea_alpha_section(snapshot, refresh_token)
-    st.markdown('<div class="section-title">투자 판단 핵심 3항목</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">핵심 판단 3요소</div>', unsafe_allow_html=True)
     col_pressure, col_rank, col_risk = st.columns([1.05, 1.45, 1.05])
     with col_pressure:
         render_market_pressure(snapshot)
@@ -4310,6 +4328,7 @@ def _series_return(points: list[Any]) -> float | None:
     return end / start - 1.0
 
 
+
 def _portfolio_health_score(
     drift: dict[str, dict[str, Any]],
     annualized_volatility: float | None,
@@ -4323,28 +4342,28 @@ def _portfolio_health_score(
     max_abs_drift = max((abs(safe_float(row.get("drift")) or 0.0) for row in drift.values()), default=0.0)
     if max_abs_drift > 0.10:
         score -= 20
-        reasons.append(f"배분 이탈 {max_abs_drift * 100:.1f}%p")
+        reasons.append(f"목표 비중 이탈 {max_abs_drift * 100:.1f}%p")
     elif max_abs_drift > 0.05:
         score -= 10
-        reasons.append(f"배분 이탈 {max_abs_drift * 100:.1f}%p")
+        reasons.append(f"목표 비중 이탈 {max_abs_drift * 100:.1f}%p")
     elif max_abs_drift > 0.03:
         score -= 5
-        reasons.append(f"배분 점검 {max_abs_drift * 100:.1f}%p")
+        reasons.append(f"비중 점검 {max_abs_drift * 100:.1f}%p")
     if annualized_volatility is not None and annualized_volatility > 0.25:
         score -= 15
         reasons.append("변동성 높음")
     elif annualized_volatility is not None and annualized_volatility > 0.18:
         score -= 8
-        reasons.append("변동성 주의")
+        reasons.append("변동성 점검")
     if max_drawdown is not None and max_drawdown < -0.20:
         score -= 20
-        reasons.append("낙폭 위험 확대")
+        reasons.append("최대 낙폭 확대")
     elif max_drawdown is not None and max_drawdown < -0.10:
         score -= 10
         reasons.append("낙폭 점검")
     if sharpe_ratio is not None and sharpe_ratio < 0.5:
         score -= 15
-        reasons.append("위험 대비 효율 낮음")
+        reasons.append("위험 대비 수익 낮음")
     elif sharpe_ratio is not None and sharpe_ratio < 1.0:
         score -= 7
         reasons.append("샤프비율 보통")
@@ -4353,18 +4372,18 @@ def _portfolio_health_score(
         reasons.append("집중도 높음")
     elif concentration.get("level") == "Medium":
         score -= 7
-        reasons.append("집중도 보통")
+        reasons.append("집중도 점검")
     if cash_weight < 0.02 or cash_weight > 0.30:
         score -= 6
         reasons.append("현금 비중 점검")
     score = int(max(0, min(100, round(score))))
     if score >= 80:
-        return score, "우수", reasons[:3] or ["리스크 균형 양호"], "#22c55e"
+        return score, "우수", reasons[:3] or ["주요 리스크 균형 양호"], "#22c55e"
     if score >= 60:
-        return score, "관찰", reasons[:3] or ["일부 지표 점검"], "#a78bfa"
+        return score, "관찰", reasons[:3] or ["일부 항목 점검"], "#a78bfa"
     if score >= 40:
-        return score, "주의", reasons[:3] or ["방어적 점검 필요"], "#f59e0b"
-    return score, "고위험", reasons[:3] or ["위험 관리 우선"], "#ef4444"
+        return score, "주의", reasons[:3] or ["리스크 관리 필요"], "#f59e0b"
+    return score, "고위험", reasons[:3] or ["포트폴리오 방어 우선"], "#ef4444"
 
 
 def _largest_drift_observation(drift: dict[str, dict[str, Any]]) -> dict[str, str] | None:
@@ -4373,71 +4392,68 @@ def _largest_drift_observation(drift: dict[str, dict[str, Any]]) -> dict[str, st
     asset_class, row = max(drift.items(), key=lambda item: abs(safe_float(item[1].get("drift")) or 0.0))
     value = safe_float(row.get("drift")) or 0.0
     label = ASSET_CLASS_LABELS.get(asset_class, asset_class)
-    direction = "초과" if value > 0 else "부족"
-    return {"observation": f"{label} 비중이 목표 대비 {abs(value) * 100:.1f}%p {direction}입니다."}
+    status = "초과" if value > 0 else "부족" if value < 0 else "목표 근접"
+    return {"assetClass": label, "status": status, "text": f"{label} {abs(value) * 100:.1f}%p {status}"}
 
 
 def _dark_chart_style(ax: plt.Axes) -> None:
     ax.set_facecolor("#0f172a")
-    ax.figure.set_facecolor("#0f172a")
-    ax.tick_params(colors="#cbd5e1", labelsize=8)
+    ax.grid(True, linestyle="--", alpha=0.18, color="#94a3b8")
+    ax.tick_params(axis="x", colors="#cbd5e1")
+    ax.tick_params(axis="y", colors="#cbd5e1")
     for spine in ax.spines.values():
         spine.set_color("#334155")
-    ax.grid(True, color="#334155", alpha=0.35, linewidth=0.7)
 
 
 def plot_portfolio_value_chart(points: list[Any], benchmark_points: list[Any]) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(8.4, 3.1))
+    fig, ax = plt.subplots(figsize=(10, 3.2))
+    fig.patch.set_facecolor("#0f172a")
     _dark_chart_style(ax)
+    if not points:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "포트폴리오 시계열 데이터가 없습니다.", ha="center", va="center", color="#cbd5e1")
+        return fig
     dates = [_portfolio_point_date(point) for point in points]
     values = [_portfolio_point_value(point) for point in points]
-    ax.plot(dates, values, color="#a78bfa", linewidth=2.4, label="포트폴리오")
+    ax.plot(dates, values, color="#a78bfa", linewidth=2.2, label="Portfolio")
     if benchmark_points:
         bench_dates = [_portfolio_point_date(point) for point in benchmark_points]
         bench_values = [_portfolio_point_value(point) for point in benchmark_points]
-        if values and bench_values and values[0] and bench_values[0]:
-            normalized = [value / bench_values[0] * values[0] for value in bench_values]
-            ax.plot(bench_dates, normalized, color="#22d3ee", linewidth=1.8, alpha=0.82, label="KOSPI 벤치마크")
-    ax.set_title("포트폴리오 vs 벤치마크", color="#ffffff", fontsize=11, fontweight="bold")
-    ax.yaxis.set_major_formatter(lambda value, _: f"{value / 1_000_000:.0f}M")
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=7))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-    ax.legend(facecolor="#111827", edgecolor="#334155", labelcolor="#e2e8f0", fontsize=8)
-    fig.autofmt_xdate()
+        ax.plot(bench_dates, bench_values, color="#38bdf8", linewidth=1.6, label="Benchmark", alpha=0.85)
+    ax.set_title("포트폴리오 vs 벤치마크", color="#f8fafc", loc="left", fontsize=12, weight="bold")
+    ax.legend(facecolor="#111827", edgecolor="#334155", labelcolor="#e5e7eb")
+    fig.autofmt_xdate(rotation=0)
     fig.tight_layout()
     return fig
 
 
 def plot_portfolio_drawdown_chart(drawdowns: list[dict[str, Any]]) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(8.4, 2.7))
+    fig, ax = plt.subplots(figsize=(10, 2.8))
+    fig.patch.set_facecolor("#0f172a")
     _dark_chart_style(ax)
-    dates = [pd.Timestamp(row["date"]) for row in drawdowns]
-    values = [float(row["drawdown"]) * 100 for row in drawdowns]
-    ax.fill_between(dates, values, 0, color="#7c3aed", alpha=0.35)
-    ax.plot(dates, values, color="#c4b5fd", linewidth=2)
-    if values:
-        min_idx = values.index(min(values))
-        ax.scatter([dates[min_idx]], [values[min_idx]], color="#f97316", s=28, zorder=3)
-        ax.annotate(f"MDD {values[min_idx]:.1f}%", (dates[min_idx], values[min_idx]), color="#fed7aa", fontsize=8)
-    ax.set_title("고점 대비 낙폭", color="#ffffff", fontsize=11, fontweight="bold")
-    ax.yaxis.set_major_formatter(lambda value, _: f"{value:.0f}%")
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=7))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-    fig.autofmt_xdate()
+    if not drawdowns:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "드로다운 데이터가 없습니다.", ha="center", va="center", color="#cbd5e1")
+        return fig
+    dates = [pd.Timestamp(row.get("date")) for row in drawdowns]
+    values = [safe_float(row.get("drawdown")) or 0.0 for row in drawdowns]
+    ax.fill_between(dates, values, 0, color="#2563eb", alpha=0.35)
+    ax.plot(dates, values, color="#60a5fa", linewidth=1.8)
+    ax.set_title("드로다운", color="#f8fafc", loc="left", fontsize=12, weight="bold")
+    ax.yaxis.set_major_formatter(lambda value, _: f"{value * 100:.0f}%")
+    fig.autofmt_xdate(rotation=0)
     fig.tight_layout()
     return fig
 
 
 def render_portfolio_health_card(score: int, label: str, reasons: list[str], color: str) -> None:
-    reason_html = "".join(f"<div class='portfolio-list-item'>{html.escape(reason)}</div>" for reason in reasons[:3])
+    reason_html = "".join(f"<div class='small-note'>- {html.escape(reason)}</div>" for reason in reasons[:3])
     st.html(
         f"""
         <div class="portfolio-card">
-            <div class="portfolio-card-title">포트폴리오 건강도</div>
-            <div class="portfolio-card-value" style="color:{color};">{score}</div>
-            <div class="portfolio-progress"><div class="portfolio-progress-fill" style="width:{score}%; background:{color};"></div></div>
-            <div class="portfolio-pill">{html.escape(label)}</div>
-            <div class="portfolio-card-sub">배분 이탈, 변동성, 낙폭, 샤프비율, 집중도, 현금 비중을 100점에서 감점합니다.</div>
+            <div class="portfolio-head"><span>Portfolio Health</span><b style="color:{color};">{html.escape(label)}</b></div>
+            <div class="pressure-score"><strong>{score}</strong><span>/100</span></div>
+            <div class="meter-track"><div class="mini-fill" style="width:{score}%; background:{color};"></div></div>
             {reason_html}
         </div>
         """
@@ -4446,55 +4462,50 @@ def render_portfolio_health_card(score: int, label: str, reasons: list[str], col
 
 def render_allocation_drift_card(drift: dict[str, dict[str, Any]]) -> None:
     rows = []
-    for asset_class in ["stocks", "bonds", "mutualFunds", "cash"]:
-        row = drift.get(asset_class, {"currentWeight": 0.0, "targetWeight": 0.0, "drift": 0.0, "status": "On target"})
+    for asset_class, row in drift.items():
         current = safe_float(row.get("currentWeight")) or 0.0
         target = safe_float(row.get("targetWeight")) or 0.0
         delta = safe_float(row.get("drift")) or 0.0
-        status = str(row.get("status"))
-        status_ko = "초과" if status == "Overweight" else "부족" if status == "Underweight" else "적정"
+        status = str(row.get("status", "On target"))
+        status_ko = "초과" if status == "Overweight" else "부족" if status == "Underweight" else "목표 근접"
+        color = "#dc2626" if delta > 0.03 else "#2563eb" if delta < -0.03 else "#64748b"
         rows.append(
             f"""
-            <div class="portfolio-row">
-                <div>{html.escape(ASSET_CLASS_LABELS.get(asset_class, asset_class))}</div>
-                <div>{current * 100:.1f}%</div>
-                <div>{target * 100:.1f}%</div>
-                <div><span class="portfolio-pill">{status_ko} {delta * 100:+.1f}%p</span></div>
+            <div class="signal-row">
+                <div class="row-label">{html.escape(ASSET_CLASS_LABELS.get(asset_class, asset_class))}</div>
+                <div class="mini-track"><div class="mini-fill" style="width:{max(2, min(100, current * 100)):.1f}%; background:{color};"></div></div>
+                <div class="row-value" style="color:{color};">{current * 100:.1f}% / {target * 100:.1f}% · {status_ko}</div>
             </div>
             """
         )
     st.html(
         f"""
         <div class="portfolio-card">
-            <div class="portfolio-card-title">목표 비중 대비 이탈</div>
-            <div class="portfolio-card-sub">현재 / 목표 / 이탈</div>
-            {''.join(rows)}
+            <div class="portfolio-head"><span>배분 이탈</span><b>현재 vs 목표</b></div>
+            {''.join(rows) if rows else '<div class="thesis">배분 데이터가 없습니다.</div>'}
         </div>
         """
     )
 
 
 def render_rebalance_candidates_card(suggestions: list[dict[str, Any]]) -> None:
-    if suggestions:
-        items = []
-        for item in suggestions[:4]:
-            asset = ASSET_CLASS_LABELS.get(str(item.get("assetClass")), str(item.get("assetClass")))
-            items.append(
-                f"""
-                <div class="portfolio-list-item">
-                    <strong>{html.escape(asset)} · {html.escape(str(item.get("action")))}</strong><br/>
-                    {portfolio_format_currency(item.get("suggestedAmount"))} · {html.escape(str(item.get("reason")))}
-                    <br/><span style="color:#c4b5fd;">{html.escape(str(item.get("impact")))}</span>
-                </div>
-                """
-            )
-        body = "".join(items)
+    if not suggestions:
+        body = '<div class="thesis">목표 비중 대비 큰 이탈이 없어 리밸런싱 후보가 없습니다.</div>'
     else:
-        body = '<div class="portfolio-list-item"><strong>큰 리밸런싱 후보 없음</strong><br/>목표 비중 대비 3%p 이상 이탈한 자산군이 없습니다.</div>'
+        body = "".join(
+            f"""
+            <div class="rank-row">
+                <div class="rank-name"><strong>{html.escape(ASSET_CLASS_LABELS.get(str(item.get("assetClass")), str(item.get("assetClass"))))}</strong><span>{html.escape(str(item.get("reason", "")))}</span></div>
+                <div class="row-value">{html.escape(str(item.get("action", "")))}</div>
+                <div class="row-value">{portfolio_format_currency(item.get("suggestedAmount"))}</div>
+            </div>
+            """
+            for item in suggestions[:5]
+        )
     st.html(
         f"""
         <div class="portfolio-card">
-            <div class="portfolio-card-title">리밸런싱 검토 후보</div>
+            <div class="portfolio-head"><span>리밸런싱 후보</span><b>주문 아님</b></div>
             {body}
         </div>
         """
@@ -4503,31 +4514,27 @@ def render_rebalance_candidates_card(suggestions: list[dict[str, Any]]) -> None:
 
 def render_risk_return_panel(metrics: dict[str, Any]) -> None:
     rows = [
-        ("연평균 성장률(CAGR)", portfolio_format_percent(metrics.get("cagr"))),
+        ("CAGR", portfolio_format_percent(metrics.get("cagr"))),
         ("기간 수익률", portfolio_format_percent(metrics.get("periodReturn"), signed=True)),
-        ("연환산 변동성", portfolio_format_percent(metrics.get("volatility"))),
-        ("샤프 비율", "N/A" if metrics.get("sharpeRatio") is None else f"{metrics.get('sharpeRatio'):.2f}"),
+        ("연율 변동성", portfolio_format_percent(metrics.get("volatility"))),
+        ("Sharpe", "N/A" if metrics.get("sharpe") is None else f"{metrics.get('sharpe'):.2f}"),
         ("최대 낙폭", portfolio_format_percent(metrics.get("maxDrawdown"))),
-        ("KOSPI 대비 베타", "N/A" if metrics.get("beta") is None else f"{metrics.get('beta'):.2f}"),
+        ("Beta", "N/A" if metrics.get("beta") is None else f"{metrics.get('beta'):.2f}"),
     ]
-    warning = []
-    if (metrics.get("sharpeRatio") is not None) and metrics["sharpeRatio"] < 0.5:
-        warning.append("샤프 0.5 미만")
-    if (metrics.get("maxDrawdown") is not None) and metrics["maxDrawdown"] < -0.20:
-        warning.append("최대낙폭 -20% 초과")
-    if (metrics.get("volatility") is not None) and metrics["volatility"] > 0.25:
-        warning.append("변동성 25% 초과")
-    body = "".join(
-        f"<div class='portfolio-row' style='grid-template-columns:1fr 1fr;'><div>{html.escape(label)}</div><div style='text-align:right;'>{html.escape(value)}</div></div>"
+    row_html = "".join(
+        f"""
+        <div class="signal-row">
+            <div class="row-label">{html.escape(label)}</div>
+            <div class="row-value">{html.escape(value)}</div>
+        </div>
+        """
         for label, value in rows
     )
-    warn_html = "".join(f"<span class='portfolio-pill' style='background:#f97316;'>{html.escape(item)}</span> " for item in warning) or "<span class='portfolio-pill'>정상 범위</span>"
     st.html(
         f"""
         <div class="portfolio-card">
-            <div class="portfolio-card-title">위험·수익 패널</div>
-            {body}
-            <div class="portfolio-card-sub">{warn_html}</div>
+            <div class="portfolio-head"><span>Risk & Return</span><b>검토 지표</b></div>
+            {row_html}
         </div>
         """
     )
@@ -4536,166 +4543,95 @@ def render_risk_return_panel(metrics: dict[str, Any]) -> None:
 def render_insight_engine_card(insights: list[dict[str, str]]) -> None:
     body = "".join(
         f"""
-        <div class="portfolio-list-item">
-            <strong>{idx}. {html.escape(item.get("observation", ""))}</strong><br/>
-            {html.escape(item.get("why", ""))}<br/>
-            <span style="color:#c4b5fd;">후보 행동: {html.escape(item.get("candidate", ""))}</span>
+        <div class="thesis">
+            <strong>{html.escape(str(item.get("observation", "")))}</strong><br/>
+            {html.escape(str(item.get("whyItMatters", "")))}<br/>
+            후보 행동: {html.escape(str(item.get("candidateAction", "")))}
         </div>
         """
-        for idx, item in enumerate(insights[:3], 1)
+        for item in insights[:3]
     )
     st.html(
         f"""
         <div class="portfolio-card">
-            <div class="portfolio-card-title">인사이트 엔진</div>
-            {body}
-            <div class="portfolio-card-sub">확정 추천이 아니라 투명한 규칙 기반 검토 항목입니다.</div>
+            <div class="portfolio-head"><span>Insight Engine</span><b>규칙 기반</b></div>
+            {body if body else '<div class="thesis">생성된 인사이트가 없습니다.</div>'}
         </div>
         """
     )
 
 
 def render_concentration_card(holdings: list[Any], concentration: dict[str, Any]) -> None:
-    total = sum((safe_float(getattr(item, "quantity", 0)) or 0.0) * (safe_float(getattr(item, "current_price", 0)) or 0.0) for item in holdings)
-    ranked = sorted(
-        holdings,
-        key=lambda item: (safe_float(getattr(item, "quantity", 0)) or 0.0) * (safe_float(getattr(item, "current_price", 0)) or 0.0),
-        reverse=True,
-    )
+    top = sorted(holdings or [], key=lambda h: (safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0), reverse=True)[:5]
+    total = sum((safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0) for h in holdings or [])
     rows = []
-    for item in ranked[:5]:
-        value = (safe_float(getattr(item, "quantity", 0)) or 0.0) * (safe_float(getattr(item, "current_price", 0)) or 0.0)
-        weight = 0.0 if total <= 0 else value / total
+    for h in top:
+        value = (safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0)
+        weight = value / total if total > 0 else 0.0
         rows.append(
             f"""
-            <div class="portfolio-list-item">
-                <strong>{html.escape(getattr(item, "name", ""))}</strong> · {html.escape(getattr(item, "symbol", ""))}
-                <span style="float:right;">{weight * 100:.1f}%</span>
+            <div class="signal-row">
+                <div class="row-label">{html.escape(str(getattr(h, "symbol", "")))}</div>
+                <div class="mini-track"><div class="mini-fill" style="width:{max(2, min(100, weight * 100)):.1f}%; background:#a78bfa;"></div></div>
+                <div class="row-value">{weight * 100:.1f}%</div>
             </div>
             """
         )
-    color = "#ef4444" if concentration.get("level") == "High" else "#f59e0b" if concentration.get("level") == "Medium" else "#22c55e"
+    level = str(concentration.get("level", "Low"))
     st.html(
         f"""
         <div class="portfolio-card">
-            <div class="portfolio-card-title">집중도 리스크</div>
-            <div class="portfolio-pill" style="background:{color};">{html.escape({'Low': '낮음', 'Medium': '주의', 'High': '높음'}.get(str(concentration.get("level")), str(concentration.get("level"))))}</div>
-            <div class="portfolio-card-sub">{html.escape(str(concentration.get("reason")))}</div>
-            {''.join(rows)}
+            <div class="portfolio-head"><span>집중도 위험</span><b>{html.escape(level)}</b></div>
+            {''.join(rows) if rows else '<div class="thesis">보유종목 데이터가 없습니다.</div>'}
+            <div class="small-note">Top weight {portfolio_format_percent(concentration.get("topHoldingWeight"))} · HHI {"N/A" if concentration.get("herfindahlIndex") is None else f"{concentration.get('herfindahlIndex'):.3f}"}</div>
         </div>
         """
     )
 
 
-def _holding_stock_signals(
-    holdings: list[Any],
-    snapshot: dict[str, Snapshot],
-    refresh_token: int,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for holding in holdings:
-        asset_class = str(getattr(holding, "asset_class", "stocks"))
-        raw_symbol = str(getattr(holding, "symbol", "")).strip()
-        if asset_class != "stocks" or not re.fullmatch(r"\d{6}", raw_symbol):
-            continue
-        code = raw_symbol
-        if code in seen:
-            continue
-        seen.add(code)
-
-        name = str(getattr(holding, "name", code))
-        snap = snapshot.get(code)
-        latest = safe_float(getattr(snap, "last_close", None) if snap is not None else None)
-        change_pct = safe_float(getattr(snap, "change_pct", None) if snap is not None else None)
-        history = load_symbol_history(code, refresh_token, periods=260)
-        signals: list[str] = []
-
-        if not history.empty:
-            _, _, _, close_col, _ = find_ohlcv_columns(history)
-            closes = pd.to_numeric(history[close_col], errors="coerce").dropna()
-            if not closes.empty:
-                history_latest = safe_float(closes.iloc[-1])
-                latest = latest if latest is not None else history_latest
-                if change_pct is None and len(closes) >= 2 and safe_float(closes.iloc[-2]) not in (None, 0):
-                    prev = float(closes.iloc[-2])
-                    change_pct = (float(closes.iloc[-1]) / prev - 1) * 100
-                if latest is not None:
-                    for window in (20, 60, 200):
-                        if len(closes) >= window:
-                            ma = safe_float(closes.tail(window).mean())
-                            if ma not in (None, 0):
-                                signals.append(f"{window}일선 {'상회' if latest >= ma else '하회'}")
-                    if len(closes) >= 60:
-                        high_52w = safe_float(closes.tail(min(252, len(closes))).max())
-                        if high_52w not in (None, 0):
-                            drawdown = (latest / high_52w - 1) * 100
-                            if drawdown >= -3:
-                                signals.append("52주 고점 근접")
-                            elif drawdown <= -20:
-                                signals.append(f"고점 대비 {drawdown:.1f}%")
-                    returns = closes.pct_change().dropna()
-                    if len(returns) >= 20:
-                        volatility = safe_float(returns.tail(60).std() * math.sqrt(252) * 100)
-                        if volatility is not None and volatility >= 45:
-                            signals.append(f"변동성 높음 {volatility:.0f}%")
-
-        if latest is None:
-            latest = safe_float(getattr(holding, "current_price", None))
-        if change_pct is None:
-            average_cost = safe_float(getattr(holding, "average_cost", None))
-            if latest is not None and average_cost not in (None, 0):
-                change_pct = (latest / average_cost - 1) * 100
-                signals.append("평단 대비 수익률")
-
-        rows.append(
+def _holding_stock_signals(holdings: list[Any], snapshot: dict[str, Snapshot]) -> list[Any]:
+    items = []
+    for holding in holdings[:8]:
+        symbol = str(getattr(holding, "symbol", ""))
+        snap = snapshot.get(symbol)
+        price = safe_float(getattr(snap, "last_close", None)) or safe_float(getattr(holding, "current_price", None)) or 0.0
+        change_pct = safe_float(getattr(snap, "change_pct", None)) or 0.0
+        items.append(
             {
-                "code": code,
-                "name": name,
-                "latest": latest,
-                "change_pct": change_pct,
-                "signals": signals[:3] or ["추세 데이터 부족"],
+                "symbol": symbol,
+                "name": str(getattr(holding, "name", symbol)),
+                "currentPrice": price,
+                "changePercent": change_pct / 100 if abs(change_pct) > 1 else change_pct,
+                "movingAverage20": None,
+                "movingAverage60": None,
+                "movingAverage200": None,
+                "fiftyTwoWeekHigh": None,
+                "fiftyTwoWeekLow": None,
+                "volatility": None,
             }
         )
-    return rows[:8]
+    return items
 
 
-def render_watchlist_signals_card(
-    holdings: list[Any],
-    snapshot: dict[str, Snapshot],
-    refresh_token: int,
-) -> None:
-    signals = _holding_stock_signals(holdings, snapshot, refresh_token)
-    chips = []
-    for item in signals:
-        change = safe_float(item.get("change_pct"))
-        color = "#22c55e" if (change or 0.0) >= 0 else "#60a5fa"
-        change_text = "N/A" if change is None else f"{change:+.2f}%"
-        price_text = "N/A" if item.get("latest") is None else f"{float(item.get('latest')):,.0f}원"
-        chips.append(
+def render_watchlist_signals_card(signals: list[dict[str, Any]]) -> None:
+    rows = []
+    for item in signals[:6]:
+        raw_reasons = item.get("signals") or item.get("reasons") or []
+        reasons = " / ".join(str(reason) for reason in raw_reasons[:2]) if raw_reasons else "추세 데이터 부족"
+        rows.append(
             f"""
-            <div class="watch-chip">
-                <strong>{html.escape(str(item.get("name")))}</strong>
-                <div style="font-size:0.72rem; color:#cbd5e1;">{html.escape(str(item.get("code")))} · {html.escape(price_text)}</div>
-                <div style="color:{color}; font-weight:900;">{html.escape(change_text)}</div>
-                <div style="font-size:0.74rem; line-height:1.35;">{html.escape(" / ".join(item.get("signals", [])[:2]))}</div>
-            </div>
-            """
-        )
-    if not chips:
-        chips.append(
-            """
-            <div class="portfolio-list-item">
-                <strong>보유종목 신호 없음</strong><br/>
-                사이드바 보유종목 CSV에 6자리 종목코드를 입력하면 해당 종목의 추세 신호가 표시됩니다.
+            <div class="rank-row">
+                <div class="rank-name"><strong>{html.escape(str(item.get("symbol", "")))}</strong><span>{html.escape(str(item.get("name", "")))}</span></div>
+                <div class="row-value" style="color:{insight_color(item.get("changePercent"))};">{portfolio_format_percent(item.get("changePercent"), signed=True)}</div>
+                <div class="row-value">{html.escape(reasons)}</div>
             </div>
             """
         )
     st.html(
         f"""
-        <div class="portfolio-card" style="min-height:unset;">
-            <div class="portfolio-card-title">보유종목 신호</div>
-            <div class="watchlist-strip">{''.join(chips)}</div>
+        <div class="portfolio-card">
+            <div class="portfolio-head"><span>보유/관심 신호</span><b>추세 확인</b></div>
+            {''.join(rows) if rows else '<div class="thesis">신호 데이터가 없습니다.</div>'}
         </div>
         """
     )
@@ -4710,99 +4646,81 @@ def render_portfolio_intelligence_section(
     parsed_rows, parse_errors = parse_portfolio_text(holdings_text)
     holdings = getHoldings(parsed_rows, snapshot, code_to_name)
     summary = getPortfolioSummary(holdings)
-    total_value = safe_float(summary.get("totalValue")) or 0.0
-    allocation = summary.get("allocation", {})
+    current_allocation = summary.get("allocation", {})
     target_allocation = summary.get("targetAllocation", [])
-    drift = calculateAllocationDrift(allocation, target_allocation)
-    suggestions = generateRebalanceSuggestions(allocation, target_allocation, total_value, {"threshold": 0.03, "minimum_trade_amount": 100_000})
-    base_points = _scale_price_points(getPortfolioSnapshots(), total_value if total_value > 0 else 1.0)
+    total_value = safe_float(summary.get("totalValue")) or 0.0
+    drift = calculateAllocationDrift(current_allocation, target_allocation)
+    suggestions = generateRebalanceSuggestions(current_allocation, target_allocation, total_value, {"threshold": 0.03, "minimum_trade_amount": 100_000})
 
-    st.markdown('<div class="portfolio-shell">', unsafe_allow_html=True)
-    st.markdown(
-        """
-        <div class="portfolio-head">
-            <div>
-                <div class="portfolio-eyebrow">Portfolio Intelligence</div>
-                <div class="portfolio-title">리스크, 배분, 리밸런싱을 한 번에 보는 투자 의사결정 보드</div>
-                <div class="portfolio-subtitle">주문 기능이 아닌 검토 후보와 위험 경고만 제공합니다. 입력 보유종목이 없으면 데모 포트폴리오로 표시됩니다.</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    range_options = {
-        "1개월": "1M",
-        "3개월": "3M",
-        "연초 이후": "YTD",
-        "1년": "1Y",
-        "3년": "3Y",
-        "전체": "All",
-    }
-    range_label = st.radio(
-        "포트폴리오 인텔리전스 기간",
-        list(range_options.keys()),
-        index=5,
+    range_key = st.radio(
+        "포트폴리오 기간",
+        ["1M", "3M", "YTD", "1Y", "3Y", "All"],
         horizontal=True,
+        index=5,
         key="portfolio_intelligence_range_label",
-        label_visibility="collapsed",
     )
-    range_key = range_options[range_label]
-    if parse_errors:
-        st.caption("포트폴리오 CSV 일부 행 제외: " + " / ".join(parse_errors[:2]))
-
-    filtered_points = _filter_price_points(base_points, range_key)
+    points = getPortfolioSnapshots()
+    filtered_points = _filter_price_points(points, range_key)
     benchmark_points = _filter_price_points(getBenchmarkSeries(), range_key)
     returns = calculatePeriodReturns(filtered_points)
-    benchmark_returns = calculatePeriodReturns(benchmark_points)
     cagr = calculateCAGR(filtered_points)
     volatility = calculateAnnualizedVolatility(returns)
-    sharpe = calculateSharpeRatio(cagr, volatility, 0.025)
+    sharpe = calculateSharpeRatio(cagr, volatility, 0.03)
     max_drawdown = calculateMaxDrawdown(filtered_points)
-    beta = calculateBeta(returns, benchmark_returns)
-    relative_return = calculateBenchmarkRelativeReturn(filtered_points, benchmark_points)
+    relative_return = calculateBenchmarkRelativeReturn(filtered_points, benchmark_points) if benchmark_points else None
+    beta = calculateBeta(returns, calculatePeriodReturns(benchmark_points)) if benchmark_points else None
     concentration = calculateConcentrationRisk(holdings)
-    cash_weight = safe_float(allocation.get("cash", {}).get("weight") if isinstance(allocation.get("cash"), dict) else allocation.get("cash")) or 0.0
-    health_score, health_label, health_reasons, health_color = _portfolio_health_score(drift, volatility, max_drawdown, sharpe, concentration, cash_weight)
-    metrics = {
-        "cagr": cagr,
-        "periodReturn": _series_return(filtered_points),
-        "volatility": volatility,
-        "sharpeRatio": sharpe,
-        "maxDrawdown": max_drawdown,
-        "beta": beta,
-        "relativeReturn": relative_return,
-        "largestDrift": _largest_drift_observation(drift),
-        "rebalanceSuggestions": suggestions,
-    }
-    insights = generatePortfolioInsightSummary(metrics)
 
-    top_cols = st.columns([1, 1.15, 1])
-    with top_cols[0]:
+    cash_weight = safe_float(current_allocation.get("cash", {}).get("weight")) if isinstance(current_allocation.get("cash"), dict) else None
+    cash_weight = cash_weight if cash_weight is not None else 0.0
+    health_score, health_label, health_reasons, health_color = _portfolio_health_score(drift, volatility, max_drawdown, sharpe, concentration, cash_weight)
+    insights = generatePortfolioInsightSummary(
+        {
+            "drift": drift,
+            "maxDrawdown": max_drawdown,
+            "sharpeRatio": sharpe,
+            "rebalanceSuggestions": suggestions,
+            "concentration": concentration,
+        }
+    )
+    watchlist_items = _holding_stock_signals(holdings, snapshot) or getWatchlist()
+    watchlist_signals = generateWatchlistSignals(watchlist_items)
+
+    st.markdown('<div class="section-title">Portfolio Intelligence</div>', unsafe_allow_html=True)
+    if parse_errors:
+        st.caption("포트폴리오 입력 확인: " + " / ".join(parse_errors[:2]))
+
+    col_a, col_b, col_c = st.columns([1.0, 1.35, 1.0])
+    with col_a:
         render_portfolio_health_card(health_score, health_label, health_reasons, health_color)
-    with top_cols[1]:
+    with col_b:
         render_allocation_drift_card(drift)
-    with top_cols[2]:
+    with col_c:
         render_rebalance_candidates_card(suggestions)
 
-    mid_cols = st.columns([1, 1])
-    with mid_cols[0]:
-        render_risk_return_panel(metrics)
-    with mid_cols[1]:
-        render_insight_engine_card(insights)
-
-    chart_cols = st.columns([1.2, 1])
-    with chart_cols[0]:
-        st.pyplot(plot_portfolio_value_chart(filtered_points, benchmark_points), clear_figure=True)
-    with chart_cols[1]:
-        st.pyplot(plot_portfolio_drawdown_chart(calculateDrawdownSeries(filtered_points)), clear_figure=True)
-        st.caption(f"벤치마크 초과수익: {portfolio_format_percent(relative_return, signed=True)}")
-
-    bottom_cols = st.columns([1, 1])
-    with bottom_cols[0]:
+    col_d, col_e = st.columns([1.05, 1.15])
+    with col_d:
+        render_risk_return_panel(
+            {
+                "cagr": cagr,
+                "periodReturn": _series_return(filtered_points),
+                "volatility": volatility,
+                "sharpe": sharpe,
+                "maxDrawdown": max_drawdown,
+                "beta": beta,
+            }
+        )
         render_concentration_card(holdings, concentration)
-    with bottom_cols[1]:
-        render_watchlist_signals_card(holdings, snapshot, refresh_token)
-    st.markdown("</div>", unsafe_allow_html=True)
+    with col_e:
+        st.pyplot(plot_portfolio_value_chart(filtered_points, benchmark_points), clear_figure=True)
+        st.pyplot(plot_portfolio_drawdown_chart(calculateDrawdownSeries(filtered_points)), clear_figure=True)
+        st.caption(f"벤치마크 대비 기간 초과수익: {portfolio_format_percent(relative_return, signed=True)}")
+
+    col_f, col_g = st.columns([1.2, 1.0])
+    with col_f:
+        render_watchlist_signals_card(watchlist_signals)
+    with col_g:
+        render_insight_engine_card(insights)
 
 
 def _korea_grade_color(grade: str) -> str:
@@ -4823,21 +4741,25 @@ def _korea_latest_price(code: str) -> float | None:
     return safe_float(getattr(history[-1], "close", None))
 
 
-def _korea_factor_dict(score: Any) -> dict[str, float]:
+def _korea_factor_items(score: Any) -> list[tuple[str, str, float]]:
     factors = getattr(score, "factor_scores", None)
     if factors is None:
-        return {}
-    return {
-        "모멘텀": float(getattr(factors, "momentum", 0) or 0),
-        "밸류": float(getattr(factors, "value", 0) or 0),
-        "퀄리티": float(getattr(factors, "quality", 0) or 0),
-        "실적": float(getattr(factors, "earnings_revision", 0) or 0),
-        "수급": float(getattr(factors, "supply_demand", 0) or 0),
-        "공시": float(getattr(factors, "event_catalyst", 0) or 0),
-        "밸류업": float(getattr(factors, "value_up", 0) or 0),
-        "유동성": float(getattr(factors, "liquidity", 0) or 0),
-        "리스크": float(getattr(factors, "risk", 0) or 0),
-    }
+        return []
+    return [
+        ("모멘텀", "momentum", float(getattr(factors, "momentum", 0) or 0)),
+        ("밸류", "value", float(getattr(factors, "value", 0) or 0)),
+        ("퀄리티", "quality", float(getattr(factors, "quality", 0) or 0)),
+        ("실적", "earnings", float(getattr(factors, "earnings_revision", 0) or 0)),
+        ("수급", "supplyDemand", float(getattr(factors, "supply_demand", 0) or 0)),
+        ("공시", "disclosure", float(getattr(factors, "event_catalyst", 0) or 0)),
+        ("밸류업", "valueUp", float(getattr(factors, "value_up", 0) or 0)),
+        ("유동성", "liquidity", float(getattr(factors, "liquidity", 0) or 0)),
+        ("리스크", "risk", float(getattr(factors, "risk", 0) or 0)),
+    ]
+
+
+def _korea_factor_dict(score: Any) -> dict[str, float]:
+    return {label: value for label, _, value in _korea_factor_items(score)}
 
 
 def _snapshot_last_close(snapshot: dict[str, Snapshot], key: str) -> float | None:
@@ -4895,7 +4817,6 @@ def build_live_korea_market_status(snapshot: dict[str, Snapshot]) -> KoreaMarket
     kosdaq = snapshot.get("KOSDAQ")
     usdkrw = snapshot.get("USD/KRW")
     kr3y = snapshot.get("KR 3Y")
-
     reasons: list[str] = []
     kospi_return = _snapshot_return_decimal(snapshot, "KOSPI")
     kosdaq_return = _snapshot_return_decimal(snapshot, "KOSDAQ")
@@ -4903,7 +4824,6 @@ def build_live_korea_market_status(snapshot: dict[str, Snapshot]) -> KoreaMarket
     kr3y_change = safe_float(kr3y.change) if kr3y is not None else None
     kospi_above = _snapshot_above_ma(snapshot, "KOSPI")
     kosdaq_above = _snapshot_above_ma(snapshot, "KOSDAQ")
-
     if kospi_return is not None:
         reasons.append(f"코스피 1일 등락률 {kospi_return * 100:+.2f}%")
     if kosdaq_return is not None:
@@ -4918,7 +4838,6 @@ def build_live_korea_market_status(snapshot: dict[str, Snapshot]) -> KoreaMarket
         reasons.append(f"국고채 3년 변화 {kr3y_change:+.2f}%p")
     if not reasons:
         reasons = list(regime_output.key_drivers[:3])
-
     source_bits = []
     for label, snap in [("KOSPI", kospi), ("KOSDAQ", kosdaq), ("USD/KRW", usdkrw), ("KR 3Y", kr3y)]:
         if snap is not None:
@@ -4929,7 +4848,6 @@ def build_live_korea_market_status(snapshot: dict[str, Snapshot]) -> KoreaMarket
         snap is not None and str(snap.frequency).lower() in {"near_realtime", "realtime_official"}
         for snap in [kospi, kosdaq, usdkrw, kr3y]
     )
-
     return KoreaMarketStatus(
         date=updated_at[:10],
         kospi_close=_snapshot_last_close(snapshot, "KOSPI"),
@@ -4988,6 +4906,37 @@ def _korea_action_label(grade: str) -> str:
     return "관찰"
 
 
+class _HtmlCell(str):
+    pass
+
+
+def _korea_widget_key(prefix: str, *parts: Any) -> str:
+    raw = "|".join(str(part) for part in (prefix,) + parts)
+    return "korea_" + hashlib.md5(raw.encode("utf-8")).hexdigest()
+
+
+def _korea_badge(text: str, tone: str = "muted") -> _HtmlCell:
+    return _HtmlCell(f'<span class="korea-badge {html.escape(tone)}">{html.escape(str(text))}</span>')
+
+
+def _korea_evidence(text: str) -> _HtmlCell:
+    return _HtmlCell(f'<span class="korea-evidence">{html.escape(str(text or "-"))}</span>')
+
+
+def _korea_factor_cell(value: Any) -> _HtmlCell:
+    bucket = korea_heatmap_bucket(value)
+    number = safe_float(value)
+    score = "-" if number is None else f"{number:.0f}"
+    return _HtmlCell(
+        f'<span class="korea-heat {html.escape(bucket["class"])}">{score}<small>{html.escape(bucket["label"])}</small></span>'
+    )
+
+
+def _safe_sharpe_text(value: Any) -> str:
+    number = safe_float(value)
+    return "-" if number is None else f"{number:.2f}"
+
+
 def _korea_module_title(title: str, subtitle: str = "", meta: str = "") -> None:
     st.markdown(
         f"""
@@ -5018,14 +4967,14 @@ def _korea_metric_html(label: str, value: str, tone: str = "") -> str:
     return f"""
     <div class="korea-metric">
         <small>{html.escape(label)}</small>
-        <strong style="{tone_style}">{html.escape(value)}</strong>
+        <strong style="{tone_style}">{html.escape(str(value))}</strong>
     </div>
     """
 
 
 def _korea_table_html(rows: list[dict[str, Any]], columns: list[str] | None = None) -> str:
     if not rows:
-        return _korea_empty_html("표시할 데이터가 없습니다.", "데이터 공급자 또는 필터 조건을 확인하세요.")
+        return _korea_empty_html("표시할 데이터가 없습니다.", "데이터 공급원 또는 필터 조건을 확인하세요.")
     columns = columns or list(rows[0].keys())
     header = "".join(f"<th>{html.escape(str(col))}</th>" for col in columns)
     body_rows: list[str] = []
@@ -5037,78 +4986,213 @@ def _korea_table_html(rows: list[dict[str, Any]], columns: list[str] | None = No
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
     return f"""
     <div class="korea-table-wrap">
-        <table class="korea-table">
-            <thead><tr>{header}</tr></thead>
-            <tbody>{''.join(body_rows)}</tbody>
-        </table>
+        <table class="korea-table"><thead><tr>{header}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>
     </div>
     """
 
 
-class _HtmlCell(str):
-    pass
+def init_korea_interaction_state() -> SelectedContext:
+    if "korea_context" not in st.session_state:
+        try:
+            st.session_state.korea_context = parse_query_context(st.query_params)
+        except Exception:
+            st.session_state.korea_context = SelectedContext()
+    context = st.session_state.get("korea_context")
+    if not isinstance(context, SelectedContext):
+        context = SelectedContext()
+        st.session_state.korea_context = context
+    else:
+        field_names = tuple(SelectedContext.__dataclass_fields__.keys())
+        if any(not hasattr(context, name) for name in field_names):
+            context = SelectedContext(**{name: getattr(context, name, None) for name in field_names})
+            st.session_state.korea_context = context
+    return context
 
 
-def _korea_badge(text: str, tone: str = "muted") -> _HtmlCell:
-    return _HtmlCell(f'<span class="korea-badge {html.escape(tone)}">{html.escape(text)}</span>')
+def _sync_korea_query_params(context: SelectedContext) -> None:
+    try:
+        query = serialize_query_context(context)
+        st.query_params.clear()
+        for key, value in query.items():
+            st.query_params[key] = value
+    except Exception:
+        pass
 
 
-def _korea_evidence(text: str) -> _HtmlCell:
-    return _HtmlCell(f'<div class="korea-evidence">{html.escape(text or "-")}</div>')
+def update_korea_context(rerun: bool = True, **updates: Any) -> SelectedContext:
+    current = init_korea_interaction_state()
+    context = merge_context(current, **updates)
+    st.session_state.korea_context = context
+    _sync_korea_query_params(context)
+    if rerun:
+        st.rerun()
+    return context
 
 
-def _korea_factor_cell(value: Any) -> _HtmlCell:
-    bucket = korea_heatmap_bucket(value)
-    number = safe_float(value)
+def _selected_context() -> SelectedContext:
+    return init_korea_interaction_state()
+
+
+def render_module_anchor(module_key: str) -> None:
+    anchor = MODULE_IDS.get(module_key)
+    if anchor:
+        st.markdown(f'<span id="{html.escape(anchor)}"></span>', unsafe_allow_html=True)
+
+
+def _module_link_label(module_key: str) -> str:
+    label = formatModuleLabel(module_key)
+    return label if label != "-" else str(module_key)
+
+
+def _render_related_module_buttons(module_keys: tuple[str, ...] | list[str], key_prefix: str) -> None:
+    valid_modules = [module for module in module_keys if module in MODULE_IDS]
+    if not valid_modules:
+        return
+    st.caption("관련 모듈 바로가기")
+    cols = st.columns(min(4, len(valid_modules)))
+    for idx, module_key in enumerate(valid_modules):
+        with cols[idx % len(cols)]:
+            if st.button(_module_link_label(module_key), key=_korea_widget_key(key_prefix, "module", module_key, idx), use_container_width=True):
+                update_korea_context(selectedModule=module_key, selectedMetric=MODULE_DEFAULT_METRIC.get(module_key), sourceModule=module_key)
+
+
+def render_korea_context_bar(key_scope: str = "") -> None:
+    context = _selected_context()
+    active = any(
+        [
+            context.selectedStockCode,
+            context.selectedMetric,
+            context.selectedFactor,
+            context.selectedModule,
+            context.selectedDate,
+            context.selectedDisclosureId,
+            context.selectedQueueItemId,
+            context.selectedScenarioId,
+            context.selectedThesisId,
+            context.selectedRiskRule,
+        ]
+    )
+    if not active:
+        st.html(
+            """
+            <div class="korea-context-bar">
+                <strong>연결 인텔리전스</strong>
+                <div class="korea-context-meta">종목, 점수, 팩터, 공시, 시나리오를 선택하면 정의·공식·관련 근거가 연결됩니다.</div>
+            </div>
+            """
+        )
+        return
+    parts = []
+    if context.selectedStockCode:
+        stock = context.selectedStockCode if not context.selectedStockName else f"{context.selectedStockName} ({context.selectedStockCode})"
+        parts.append(f"종목 {stock}")
+    if context.selectedModule:
+        parts.append(f"모듈 {formatModuleLabel(context.selectedModule)}")
+    if context.selectedMetric:
+        parts.append(f"지표 {formatMetricLabel(context.selectedMetric)}")
+    if context.selectedFactor:
+        parts.append(f"팩터 {formatFactorLabel(context.selectedFactor)}")
+    if context.selectedScenarioId:
+        parts.append(f"시나리오 {context.selectedScenarioId}")
+    if context.selectedThesisId:
+        parts.append(f"가설 {context.selectedThesisId}")
+    if context.selectedRiskRule:
+        parts.append(f"알림 {context.selectedRiskRule}")
+    st.html(
+        f"""
+        <div class="korea-context-bar korea-selected-card">
+            <strong>선택됨</strong>
+            <div class="korea-context-meta">{html.escape(' · '.join(parts))}</div>
+        </div>
+        """
+    )
+    if st.button("선택 해제", key=_korea_widget_key("korea_context_clear", key_scope)):
+        st.session_state.korea_context = SelectedContext()
+        _sync_korea_query_params(st.session_state.korea_context)
+        st.rerun()
+
+
+def render_explanation_panel(extra_evidence: list[str] | None = None, key_scope: str = "") -> None:
+    context = _selected_context()
+    explanation = explanation_for_factor(context.selectedFactor) if context.selectedFactor else None
+    if explanation is None:
+        explanation = get_metric_explanation(context.selectedMetric)
+    if explanation is None and context.selectedModule:
+        explanation = get_metric_explanation(MODULE_DEFAULT_METRIC.get(context.selectedModule))
+    if explanation is None:
+        return
+    related = explanation.relatedModules or related_modules_for_metric(explanation.key)
+    assumptions = "".join(f"<li>{html.escape(item)}</li>" for item in explanation.assumptions)
+    evidence = "".join(f"<li>{html.escape(item)}</li>" for item in (extra_evidence or []) if item)
+    related_html = "".join(f'<span class="korea-mini-link">{html.escape(formatModuleLabel(module))}</span>' for module in related if module in MODULE_IDS)
+    value = ""
+    if context.selectedMetric:
+        value = f"<div class='korea-explain-muted'>선택 지표: {html.escape(formatMetricLabel(context.selectedMetric))}</div>"
+    if context.selectedFactor:
+        value += f"<div class='korea-explain-muted'>선택 팩터: {html.escape(formatFactorLabel(context.selectedFactor))}</div>"
+    st.html(
+        f"""
+        <div class="korea-explanation-panel">
+            <strong>{html.escape(explanation.label)}</strong>
+            {value}
+            <div class="korea-explain-muted" style="margin-top:8px;"><b>정의</b><br/>{html.escape(explanation.definition)}</div>
+            <div class="korea-explain-muted" style="margin-top:8px;"><b>공식/방식</b><br/>{html.escape(explanation.formula)}</div>
+            <div class="korea-explain-muted" style="margin-top:8px;"><b>해석</b><br/>{html.escape(explanation.interpretation)}</div>
+            {f'<div class="korea-explain-muted" style="margin-top:8px;"><b>가정</b><ul>{assumptions}</ul></div>' if assumptions else ''}
+            {f'<div class="korea-explain-muted" style="margin-top:8px;"><b>선택 근거</b><ul>{evidence}</ul></div>' if evidence else ''}
+            <div style="margin-top:10px;">{related_html}</div>
+        </div>
+        """
+    )
+    _render_related_module_buttons(tuple(related), _korea_widget_key("related", key_scope, explanation.key, context.selectedStockCode))
+
+
+def render_explainable_metric_button(label: str, value: str, metric_key: str, module_key: str, stock_code: str | None = None, stock_name: str | None = None, tone: str = "", help_text: str | None = None, key_scope: str = "") -> None:
+    selected = _selected_context()
+    is_selected = selected.selectedMetric == metric_key and (stock_code is None or selected.selectedStockCode == stock_code)
+    button_label = f"{'선택됨 · ' if is_selected else ''}{label}: {value}"
+    if st.button(button_label, key=_korea_widget_key("metric", key_scope, module_key, stock_code, metric_key, label), use_container_width=True, help=help_text or f"{label} 정의와 근거를 봅니다."):
+        update_korea_context(selectedStockCode=stock_code or selected.selectedStockCode, selectedStockName=stock_name or selected.selectedStockName, selectedMetric=metric_key, selectedModule=module_key, sourceModule=module_key)
+
+
+def render_linked_stock_button(code: str, name: str, module_key: str, suffix: str = "") -> None:
+    context = _selected_context()
+    selected = context.selectedStockCode == code
+    label = f"{'선택됨 · ' if selected else ''}{name} ({code})"
+    if suffix:
+        label = f"{label} · {suffix}"
+    if st.button(label, key=_korea_widget_key("stock", module_key, code, suffix), use_container_width=True):
+        update_korea_context(selectedStockCode=code, selectedStockName=name, selectedModule=module_key, sourceModule=module_key)
+
+
+def render_linked_factor_button(factor_label: str, factor_key: str, score_value: Any, module_key: str, stock_code: str | None = None, stock_name: str | None = None, key_scope: str = "") -> None:
+    bucket = korea_heatmap_bucket(score_value)
+    number = safe_float(score_value)
     score_text = "-" if number is None else f"{number:.0f}"
-    label = bucket["label"]
-    css_class = bucket["class"]
-    return _HtmlCell(f'<span class="korea-factor-cell {html.escape(css_class)}">{score_text} · {html.escape(label)}</span>')
-
-
-def _safe_sharpe_text(value: Any) -> str:
-    number = safe_float(value)
-    return "-" if number is None else f"{number:.2f}"
+    context = _selected_context()
+    selected = context.selectedFactor == factor_key and (stock_code is None or context.selectedStockCode == stock_code)
+    label = f"{'선택됨 · ' if selected else ''}{factor_label} {score_text} · {bucket['label']}"
+    if st.button(label, key=_korea_widget_key("factor", key_scope, module_key, stock_code, factor_key), use_container_width=True):
+        update_korea_context(selectedStockCode=stock_code or context.selectedStockCode, selectedStockName=stock_name or context.selectedStockName, selectedFactor=factor_key, selectedMetric=FACTOR_TO_METRIC.get(factor_key), selectedModule=module_key, sourceModule=module_key)
 
 
 def render_korea_market_regime_card(market_status: Any) -> None:
-    regime_label = {
-        "risk_on": "위험 선호",
-        "neutral": "중립",
-        "risk_off": "위험 회피",
-        "panic": "패닉",
-        "recovery": "회복",
-    }.get(str(getattr(market_status, "regime", "neutral")), str(getattr(market_status, "regime", "neutral")))
+    regime_label = {"risk_on": "위험 선호", "neutral": "중립", "risk_off": "위험 회피", "panic": "패닉", "recovery": "회복"}.get(str(getattr(market_status, "regime", "neutral")), str(getattr(market_status, "regime", "neutral")))
     score = max(0.0, min(100.0, safe_float(getattr(market_status, "regime_score", None)) or 50.0))
     reasons = "".join(f"<div class='portfolio-list-item'>{html.escape(str(reason))}</div>" for reason in getattr(market_status, "reason", [])[:4])
     kospi_text = _format_market_number(getattr(market_status, "kospi_close", None), 2)
     kosdaq_text = _format_market_number(getattr(market_status, "kosdaq_close", None), 2)
     usd_text = _format_market_number(getattr(market_status, "usd_krw", None), 2)
     kr3y_text = _format_market_number(getattr(market_status, "bond_yield_3y", None), 2, "%")
-    live_label = "현재 스냅샷" if getattr(market_status, "is_live", False) else "지연/보조 스냅샷"
+    live_label = "현재 데이터" if getattr(market_status, "is_live", False) else "지연/보조 데이터"
     source_text = f"{live_label} · {getattr(market_status, 'updated_at', '-') or '-'}"
-    st.html(
-        f"""
+    st.html(f"""
         <div class="korea-card">
-            <div class="korea-card-head">
-                <div>
-                    <div class="korea-card-title">한국시장 국면</div>
-                    <div class="korea-card-subtitle">지수, 환율, 금리와 장기 추세를 함께 반영한 시장 환경 점수</div>
-                </div>
-                <span class="korea-badge {_korea_grade_badge_class('NEUTRAL')}">{html.escape(regime_label)}</span>
-            </div>
-            <div class="korea-score">{score:.0f}/100</div>
-            <div class="portfolio-progress"><div class="portfolio-progress-fill" style="width:{score:.0f}%;"></div></div>
-            <div class="portfolio-card-sub">
-                KOSPI {kospi_text} {_format_market_return(getattr(market_status, "kospi_return_1d", None))} ·
-                KOSDAQ {kosdaq_text} {_format_market_return(getattr(market_status, "kosdaq_return_1d", None))}<br/>
-                USD/KRW {usd_text} · 국고채 3년 {kr3y_text}<br/>
-                데이터 기준: {html.escape(source_text)}
-            </div>
-            {reasons}
+            <div class="korea-card-head"><div><div class="korea-card-title">한국시장 국면</div><div class="korea-card-subtitle">지수, 환율, 금리와 장기 추세를 함께 반영한 시장 환경 점수</div></div><span class="korea-badge {_korea_grade_badge_class('NEUTRAL')}">{html.escape(regime_label)}</span></div>
+            <div class="korea-score">{score:.0f}/100</div><div class="portfolio-progress"><div class="portfolio-progress-fill" style="width:{score:.0f}%;"></div></div>
+            <div class="portfolio-card-sub">KOSPI {kospi_text} {_format_market_return(getattr(market_status, "kospi_return_1d", None))} · KOSDAQ {kosdaq_text} {_format_market_return(getattr(market_status, "kosdaq_return_1d", None))}<br/>USD/KRW {usd_text} · 국고채3Y {kr3y_text}<br/>데이터 기준: {html.escape(source_text)}</div>{reasons}
         </div>
-        """
-    )
+    """)
 
 
 def render_korea_top_candidates_card(candidates: list[Any]) -> None:
@@ -5116,348 +5200,287 @@ def render_korea_top_candidates_card(candidates: list[Any]) -> None:
     for idx, score in enumerate(candidates[:6], 1):
         grade = str(getattr(score, "recommendation_grade", "NEUTRAL"))
         color = _korea_grade_color(grade)
-        rows.append(
-            f"""
-            <div class="portfolio-list-item">
-                <strong>{idx}. {html.escape(getattr(score, "name", ""))}</strong>
-                <span style="float:right; color:{color}; font-weight:900;">{getattr(score, "total_score", 0):.0f}</span><br/>
-                {html.escape(getattr(score, "code", ""))} · {html.escape(korea_format_grade(grade))} ·
-                초과수익 {html.escape(korea_format_percent(getattr(score, "expected_excess_return_3m", None), signed=True))}
-                <br/><span style="color:#c4b5fd;">{html.escape(' / '.join(getattr(score, "positive_reasons", [])[:2]))}</span>
-            </div>
-            """
-        )
-    st.html(
-        f"""
-        <div class="korea-card">
-            <div class="korea-card-head">
-                <div>
-                    <div class="korea-card-title">한국주식 알파 후보</div>
-                    <div class="korea-card-subtitle">점수와 신뢰도를 함께 확인하는 검토 후보 목록</div>
-                </div>
-                <span class="korea-badge info">상위 {len(candidates[:6])}개</span>
-            </div>
-            {''.join(rows) if rows else _korea_empty_html('표시할 후보가 없습니다.', '필터 조건을 낮추거나 데이터 갱신을 확인하세요.')}
-        </div>
-        """
-    )
+        reasons = " / ".join(getattr(score, "positive_reasons", [])[:2])
+        rows.append(f"""
+            <div class="portfolio-list-item"><strong>{idx}. {html.escape(getattr(score, "name", ""))}</strong><span style="float:right; color:{color}; font-weight:900;">{getattr(score, "total_score", 0):.0f}</span><br/>{html.escape(getattr(score, "code", ""))} · {html.escape(korea_format_grade(grade))} · 초과수익 {html.escape(korea_format_percent(getattr(score, "expected_excess_return_3m", None), signed=True))}<br/><span style="color:#c4b5fd;">{html.escape(reasons)}</span></div>
+        """)
+    st.html(f"""
+        <div class="korea-card"><div class="korea-card-head"><div><div class="korea-card-title">한국주식 알파 후보</div><div class="korea-card-subtitle">점수와 신뢰도를 함께 확인하는 검토 후보 목록</div></div><span class="korea-badge info">상위 {len(candidates[:6])}개</span></div>{''.join(rows) if rows else _korea_empty_html('표시할 후보가 없습니다.', '필터 조건을 낮추거나 데이터를 갱신하세요.')}</div>
+    """)
 
 
 def render_korea_risk_control_panel(data: dict[str, Any]) -> None:
     summary = data.get("riskSummary", {})
     alerts = "".join(f"<div class='portfolio-list-item'>{html.escape(str(item))}</div>" for item in summary.get("risk_alerts", [])[:4])
     avg_conf = summary.get("avg_confidence")
-    st.html(
-        f"""
-        <div class="korea-card">
-            <div class="korea-card-head">
-                <div>
-                    <div class="korea-card-title">리스크 관리</div>
-                    <div class="korea-card-subtitle">신규 검토 전 확인해야 할 위험 플래그</div>
-                </div>
-                <span class="korea-badge {'risk' if summary.get('high_risk_count', 0) else 'good'}">{summary.get("high_risk_count", 0)}건</span>
-            </div>
-            <div class="korea-score">{summary.get("high_risk_count", 0)}</div>
-            <div class="portfolio-card-sub">리스크 플래그 후보 수 · 평균 신뢰도 {html.escape(korea_format_confidence(avg_conf))}</div>
-            {alerts if alerts else _korea_empty_html('중대한 리스크 플래그가 없습니다.', '단, 공시와 유동성은 계속 확인해야 합니다.')}
-        </div>
-        """
-    )
+    st.html(f"""
+        <div class="korea-card"><div class="korea-card-head"><div><div class="korea-card-title">리스크 관리</div><div class="korea-card-subtitle">신규 검토 전 확인해야 할 위험 플래그</div></div><span class="korea-badge {'risk' if summary.get('high_risk_count', 0) else 'good'}">{summary.get("high_risk_count", 0)}건</span></div><div class="korea-score">{summary.get("high_risk_count", 0)}</div><div class="portfolio-card-sub">리스크 플래그 후보 수 · 평균 신뢰도 {html.escape(korea_format_confidence(avg_conf))}</div>{alerts if alerts else _korea_empty_html('중대한 리스크 플래그가 없습니다.', '단, 공시와 유동성은 계속 확인해야 합니다.')}</div>
+    """)
 
 
 def render_korea_recommendation_table(scores: list[Any]) -> None:
-    table_rows = []
+    render_module_anchor("investmentAlgorithm")
+    _korea_module_title("투자검토 알고리즘", "확정 매수·매도가 아니라 점수, 신뢰도, 기대수익, 하방위험을 함께 보는 검토 후보 표입니다.", f"{len(scores)}개 표시")
+    if scores:
+        context = _selected_context()
+        active_score = next((row for row in scores if getattr(row, "code", "") == context.selectedStockCode), scores[0])
+        active_code = str(getattr(active_score, "code", "") or "")
+        active_name = str(getattr(active_score, "name", "") or active_code)
+        stock_cols = st.columns(min(4, len(scores[:4])))
+        for idx, score in enumerate(scores[:4]):
+            with stock_cols[idx % len(stock_cols)]:
+                render_linked_stock_button(str(getattr(score, "code", "") or ""), str(getattr(score, "name", "") or getattr(score, "code", "")), "investmentAlgorithm", korea_format_score(getattr(score, "total_score", None)))
+        metric_cols = st.columns(5)
+        metric_specs = [
+            ("총점", korea_format_score(getattr(active_score, "total_score", None)), "totalScore"),
+            ("등급", korea_format_grade(str(getattr(active_score, "recommendation_grade", ""))), "recommendationGrade"),
+            ("신뢰도", korea_format_confidence(getattr(active_score, "confidence", None)), "confidence"),
+            ("3M 기대수익", korea_format_percent(getattr(active_score, "expected_return_3m", None), signed=True), "expectedReturn3M"),
+            ("하방위험", korea_format_percent(getattr(active_score, "downside_risk", None)), "downsideRisk"),
+        ]
+        for col, (label, value, metric_key) in zip(metric_cols, metric_specs):
+            with col:
+                render_explainable_metric_button(label, value, metric_key, "investmentAlgorithm", active_code, active_name, key_scope="algo")
+    rows = []
     for score in scores:
         latest = _korea_latest_price(getattr(score, "code", ""))
         grade = str(getattr(score, "recommendation_grade", ""))
-        evidence = " / ".join(
-            list(getattr(score, "positive_reasons", []) or [])[:2]
-            + list(getattr(score, "negative_reasons", []) or [])[:1]
-        )
-        table_rows.append(
-            {
-                "종목": _HtmlCell(
-                    f"{html.escape(getattr(score, 'name', ''))}"
-                    f"<span class='muted'>{html.escape(getattr(score, 'code', ''))} · {html.escape(korea_format_market_label(getattr(score, 'market', '')))} · {html.escape(str(getattr(score, 'sector', '-') or '-'))}</span>"
-                ),
-                "검토 상태": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(grade)),
-                "총점": korea_format_score(getattr(score, "total_score", None)),
-                "신뢰도": korea_format_confidence(getattr(score, "confidence", None)),
-                "현재가": korea_format_krw(latest),
-                "상승확률 1M": korea_format_percent(getattr(score, "probability_outperform_1m", None)),
-                "기대수익 3M": korea_format_percent(getattr(score, "expected_return_3m", None), signed=True),
-                "초과수익 3M": korea_format_percent(getattr(score, "expected_excess_return_3m", None), signed=True),
-                "하방위험": korea_format_percent(getattr(score, "downside_risk", None)),
-                "제안비중": korea_format_percent(getattr(score, "suggested_weight", None)),
-                "감시/무효화": _HtmlCell(
-                    f"{html.escape(korea_format_krw(getattr(score, 'stop_review_price', None)))}"
-                    f"<span class='muted'>무효화 {html.escape(korea_format_krw(getattr(score, 'invalidation_price', None)))}</span>"
-                ),
-                "근거": _korea_evidence(evidence or "근거 데이터 부족"),
-                "데이터": _HtmlCell(
-                    f"{html.escape(str(getattr(score, 'last_updated', '-') or '-'))}"
-                    f"<span class='muted'>{html.escape(str(getattr(score, 'model_version', '-') or '-'))}</span>"
-                ),
-            }
-        )
-    _korea_module_title(
-        "투자검토 알고리즘",
-        "확정 매수·매도가 아니라 점수, 신뢰도, 기대수익, 하방위험을 함께 보는 검토 후보 표입니다.",
-        f"{len(table_rows)}개 표시",
-    )
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            {_korea_table_html(table_rows)}
-        </div>
-        """
-    )
+        evidence = " / ".join(list(getattr(score, "positive_reasons", []) or [])[:2] + list(getattr(score, "negative_reasons", []) or [])[:1])
+        rows.append({"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))} · {html.escape(korea_format_market_label(getattr(score, 'market', '')))}</span>"), "검토상태": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(grade)), "총점": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "현재가": korea_format_krw(latest), "3M 기대": korea_format_percent(getattr(score, "expected_return_3m", None), signed=True), "하방위험": korea_format_percent(getattr(score, "downside_risk", None)), "검토비중": korea_format_percent(getattr(score, "suggested_weight", None)), "근거": _korea_evidence(evidence)})
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
 def render_korea_signal_breakdown(scores: list[Any]) -> None:
     if not scores:
-        st.html(
-            f"""
-            <div class="korea-card compact">
-                {_korea_empty_html("상세 근거를 표시할 후보가 없습니다.", "필터 조건을 확인하세요.")}
-            </div>
-            """
-        )
+        st.html(f'<div class="korea-card compact">{_korea_empty_html("선택 종목 상세 근거가 없습니다.")}</div>')
         return
-    labels = [f"{getattr(score, 'code', '')} {getattr(score, 'name', '')}" for score in scores]
-    selected = st.selectbox("알고리즘 판단 근거", labels, key="korea_signal_breakdown_select")
-    score = scores[labels.index(selected)]
-    factors = _korea_factor_dict(score)
-    grade = str(getattr(score, "recommendation_grade", ""))
-    metric_html = "".join(
-        [
-            _korea_metric_html("총점", korea_format_score(getattr(score, "total_score", None))),
-            _korea_metric_html("등급", korea_format_grade(grade), _korea_grade_badge_class(grade)),
-            _korea_metric_html("신뢰도", korea_format_confidence(getattr(score, "confidence", None))),
-            _korea_metric_html("3M 기대수익", korea_format_percent(getattr(score, "expected_return_3m", None), signed=True)),
-            _korea_metric_html("하방위험", korea_format_percent(getattr(score, "downside_risk", None)), "warn"),
-        ]
-    )
-    factor_rows = [{"팩터": key, "점수": _korea_factor_cell(value)} for key, value in factors.items()]
-    positive = "".join(f"<div class='portfolio-list-item'>{html.escape(str(reason))}</div>" for reason in getattr(score, "positive_reasons", [])[:6])
-    negatives = list(getattr(score, "negative_reasons", []) or []) + list(getattr(score, "risk_flags", []) or [])
-    negative = "".join(f"<div class='portfolio-list-item'>{html.escape(str(reason))}</div>" for reason in negatives[:6])
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            <div class="korea-card-head">
-                <div>
-                    <div class="korea-card-title">선택 종목 상세 근거</div>
-                    <div class="korea-card-subtitle">{html.escape(getattr(score, 'name', ''))} ({html.escape(getattr(score, 'code', ''))}) · 데이터 기준 {html.escape(str(getattr(score, 'last_updated', '-') or '-'))}</div>
-                </div>
-                <span class="korea-badge {_korea_grade_badge_class(grade)}">{html.escape(_korea_action_label(grade))}</span>
-            </div>
-            <div class="korea-metric-grid">{metric_html}</div>
-            {_korea_table_html(factor_rows, ["팩터", "점수"])}
-            <div class="portfolio-grid-wide">
-                <div>
-                    <div class="korea-card-title" style="margin-top:12px;">긍정 근거</div>
-                    {positive if positive else _korea_empty_html("긍정 근거 데이터가 부족합니다.")}
-                </div>
-                <div>
-                    <div class="korea-card-title" style="margin-top:12px;">반대 근거·리스크</div>
-                    {negative if negative else _korea_empty_html("중대한 반대 근거가 없습니다.")}
-                </div>
-            </div>
-        </div>
-        """
-    )
+    context = _selected_context()
+    score = next((row for row in scores if getattr(row, "code", "") == context.selectedStockCode), scores[0])
+    positives = "".join(f"<div class='portfolio-list-item'>{html.escape(str(item))}</div>" for item in getattr(score, "positive_reasons", [])[:5])
+    negatives = "".join(f"<div class='portfolio-list-item'>{html.escape(str(item))}</div>" for item in getattr(score, "negative_reasons", [])[:5])
+    st.html(f"""
+        <div class="korea-card compact"><div class="korea-card-head"><div><div class="korea-card-title">선택 종목 상세 근거</div><div class="korea-card-subtitle">{html.escape(getattr(score, 'name', ''))} ({html.escape(getattr(score, 'code', ''))}) · 데이터 기준 {html.escape(str(getattr(score, 'last_updated', '-') or '-'))}</div></div><span class="korea-badge {_korea_grade_badge_class(str(getattr(score, 'recommendation_grade', 'NEUTRAL')))}">{html.escape(korea_format_grade(str(getattr(score, 'recommendation_grade', 'NEUTRAL'))))}</span></div><div class="korea-card-title" style="margin-top:12px;">긍정 근거</div>{positives or _korea_empty_html('긍정 근거 부족')}<div class="korea-card-title" style="margin-top:12px;">반대 근거·리스크</div>{negatives or _korea_empty_html('주요 리스크 없음')}</div>
+    """)
 
 
 def render_korea_factor_heatmap(scores: list[Any]) -> None:
+    render_module_anchor("factorHeatmap")
+    _korea_module_title("팩터 히트맵", "종목별 강점과 약점을 같은 색상 기준으로 비교합니다.")
+    for score in scores[:4]:
+        code = str(getattr(score, "code", "") or "")
+        name = str(getattr(score, "name", "") or code)
+        render_linked_stock_button(code, name, "factorHeatmap", korea_format_score(getattr(score, "total_score", None)))
+        cols = st.columns(3)
+        for idx, (label, factor_key, value) in enumerate(_korea_factor_items(score)):
+            with cols[idx % 3]:
+                render_linked_factor_button(label, factor_key, value, "factorHeatmap", code, name, key_scope="heat")
     rows = []
-    for score in scores[:12]:
-        factors = _korea_factor_dict(score)
-        rows.append(
-            {
-                "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"),
-                "총점": _korea_factor_cell(getattr(score, "total_score", None)),
-                **{key: _korea_factor_cell(value) for key, value in factors.items()},
-            }
-        )
-    _korea_module_title("팩터 히트맵", "강함/양호/보통/약함/취약 구간을 같은 색상 규칙으로 표시합니다.", f"{len(rows)}개")
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            {_korea_table_html(rows)}
-        </div>
-        """
-    )
+    for score in scores[:10]:
+        row = {"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>")}
+        for label, _, value in _korea_factor_items(score):
+            row[label] = _korea_factor_cell(value)
+        rows.append(row)
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
 def render_korea_supply_demand_radar(scores: list[Any]) -> None:
+    render_module_anchor("supplyDemandRadar")
+    _korea_module_title("수급 레이더", "최근 20거래일 외국인·기관·연기금 순매수 흐름을 평가합니다.")
     rows = []
     for score in scores[:8]:
-        supply = getKoreaSupplyDemand(getattr(score, "code", ""))
+        code = str(getattr(score, "code", "") or "")
+        supply = getKoreaSupplyDemand(code)
         last_20 = supply[-20:]
         foreign = sum(safe_float(getattr(row, "foreign_net_buy", 0)) or 0 for row in last_20)
         institution = sum(safe_float(getattr(row, "institution_net_buy", 0)) or 0 for row in last_20)
         pension = sum(safe_float(getattr(row, "pension_net_buy", 0)) or 0 for row in last_20)
-        flow_total = foreign + institution + pension
-        signal = "수급 개선" if flow_total > 0 else "수급 약화"
-        rows.append(
-            {
-                "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"),
-                "외국인 20D": korea_format_trading_value(foreign),
-                "기관 20D": korea_format_trading_value(institution),
-                "연기금 20D": korea_format_trading_value(pension),
-                "합산": korea_format_trading_value(flow_total),
-                "신호": _korea_badge(signal, "good" if flow_total > 0 else "warn"),
-            }
-        )
-    _korea_module_title("수급 레이더", "최근 20거래일 외국인·기관·연기금 순매수 흐름을 점검합니다.")
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            {_korea_table_html(rows)}
-        </div>
-        """
-    )
+        total = foreign + institution + pension
+        signal = "수급 개선" if total > 0 else "수급 약화"
+        rows.append({"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(code)}</span>"), "외국인 20D": korea_format_trading_value(foreign), "기관 20D": korea_format_trading_value(institution), "연기금 20D": korea_format_trading_value(pension), "합산": korea_format_trading_value(total), "신호": _korea_badge(signal, "good" if total > 0 else "warn")})
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
 def render_korea_disclosure_radar(disclosures: list[Any]) -> None:
-    rows = []
-    for event in disclosures[:8]:
-        sentiment = str(getattr(event, "sentiment", "") or "")
-        tone = "good" if sentiment == "positive" else "risk" if sentiment == "negative" else "muted"
-        rows.append(
-            {
-                "일자": getattr(event, "date", ""),
-                "종목": getattr(event, "code", ""),
-                "분류": getattr(event, "category", ""),
-                "감성": _korea_badge(sentiment or "neutral", tone),
-                "중요도": f"{getattr(event, 'importance', 0):.0f}",
-                "요약": _korea_evidence(getattr(event, "summary", "") or getattr(event, "title", "")),
-            }
-        )
+    render_module_anchor("disclosureRadar")
     _korea_module_title("공시·이벤트 레이더", "공시 리스크와 촉매를 신규 검토 전에 먼저 확인합니다.")
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            {_korea_table_html(rows)}
-        </div>
-        """
-    )
+    rows = []
+    context = _selected_context()
+    for event in disclosures[:8]:
+        event_id = str(getattr(event, "id", "") or f"{getattr(event, 'code', '')}-{getattr(event, 'date', '')}")
+        code = str(getattr(event, "code", "") or "")
+        title = str(getattr(event, "title", "") or getattr(event, "summary", "") or "공시 이벤트")
+        sentiment = str(getattr(event, "sentiment", "") or "neutral")
+        tone = "good" if sentiment == "positive" else "risk" if sentiment == "negative" else "muted"
+        if st.button(f"{getattr(event, 'date', '-')} · {code} · {title[:32]}", key=_korea_widget_key("disclosure", event_id), use_container_width=True):
+            update_korea_context(selectedStockCode=code, selectedDisclosureId=event_id, selectedMetric="disclosureScore", selectedModule="disclosureRadar", sourceModule="disclosureRadar")
+        rows.append({"일자": getattr(event, "date", ""), "종목": code, "분류": getattr(event, "category", ""), "감성": _korea_badge(sentiment, tone), "중요도": f"{getattr(event, 'importance', 0):.0f}", "요약": _korea_evidence(getattr(event, "summary", "") or title)})
+        if context.selectedDisclosureId == event_id:
+            url = safe_external_url(getattr(event, "url", None))
+            st.html(f"<div class='korea-explanation-panel'><strong>{html.escape(title)}</strong><div class='korea-explain-muted'>일자 {html.escape(str(getattr(event, 'date', '-') or '-'))} · 종목 {html.escape(code)} · 중요도 {safe_float(getattr(event, 'importance', None)) or 0:.0f}</div><div class='korea-explain-muted' style='margin-top:8px;'>분류 {html.escape(str(getattr(event, 'category', '-') or '-'))} · 감성 {html.escape(sentiment)}</div></div>")
+            if url:
+                st.link_button("원문 보기", url, use_container_width=True)
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
 def render_korea_value_up_radar(candidates: list[Any]) -> None:
+    render_module_anchor("valueUpRadar")
+    _korea_module_title("밸류업 레이더", "저평가, 주주환원, 재무 안정성을 함께 보는 정책 수혜 후보입니다.")
     rows = []
     for score in candidates[:8]:
         factors = _korea_factor_dict(score)
-        rows.append(
-            {
-                "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"),
-                "밸류업": _korea_factor_cell(factors.get("밸류업")),
-                "밸류": _korea_factor_cell(factors.get("밸류")),
-                "퀄리티": _korea_factor_cell(factors.get("퀄리티")),
-                "제안비중": korea_format_percent(getattr(score, "suggested_weight", None)),
-                "근거": _korea_evidence(" / ".join(getattr(score, "positive_reasons", [])[:2])),
-            }
-        )
-    _korea_module_title("밸류업 레이더", "저평가, 주주환원, 재무 품질을 함께 보는 정책 수혜 후보입니다.")
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            {_korea_table_html(rows)}
-        </div>
-        """
-    )
+        rows.append({"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"), "밸류업": _korea_factor_cell(factors.get("밸류업")), "밸류": _korea_factor_cell(factors.get("밸류")), "퀄리티": _korea_factor_cell(factors.get("퀄리티")), "검토비중": korea_format_percent(getattr(score, "suggested_weight", None)), "근거": _korea_evidence(" / ".join(getattr(score, "positive_reasons", [])[:2]))})
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
 def render_korea_backtest_accuracy_panel(backtest: Any) -> None:
-    _korea_module_title(
-        "예측 정확도·백테스트",
-        "룰 기반 추정 성과입니다. 미래 수익을 보장하지 않으며 비용·슬리피지·세금 가정을 함께 봅니다.",
-    )
-    metric_html = "".join(
-        [
-            _korea_metric_html("CAGR", korea_format_percent(getattr(backtest, "cagr", None))),
-            _korea_metric_html("초과수익", korea_format_percent(getattr(backtest, "excess_return", None), signed=True)),
-            _korea_metric_html("MDD", korea_format_percent(getattr(backtest, "max_drawdown", None)), "warn"),
-            _korea_metric_html("Sharpe", _safe_sharpe_text(getattr(backtest, "sharpe_ratio", None))),
-            _korea_metric_html("Hit Ratio", korea_format_percent(getattr(backtest, "hit_ratio", None))),
-            _korea_metric_html("P@10", korea_format_percent(getattr(backtest, "precision_at_top10", None))),
-        ]
-    )
+    render_module_anchor("backtestAccuracy")
+    _korea_module_title("예측 정확도·백테스트", "룰 기반 추정 성과입니다. 미래 수익을 보장하지 않으며 비용·슬리피지·세금 가정을 함께 봅니다.")
+    metric_specs = [("CAGR", korea_format_percent(getattr(backtest, "cagr", None)), "cagr"), ("초과수익", korea_format_percent(getattr(backtest, "excess_return", None), signed=True), "excessReturn"), ("MDD", korea_format_percent(getattr(backtest, "max_drawdown", None)), "mdd"), ("Sharpe", _safe_sharpe_text(getattr(backtest, "sharpe_ratio", None)), "sharpe"), ("P@10", korea_format_percent(getattr(backtest, "precision_at_top10", None)), "precisionAt10"), ("Rank IC", _safe_sharpe_text(getattr(backtest, "factor_rank_ic", None)), "rankIC")]
+    metric_cols = st.columns(3)
+    for idx, (label, value, metric_key) in enumerate(metric_specs):
+        with metric_cols[idx % 3]:
+            render_explainable_metric_button(label, value, metric_key, "backtestAccuracy", key_scope="backtest")
+    metric_html = "".join(_korea_metric_html(label, value, "warn" if label == "MDD" else "") for label, value, _ in metric_specs)
     notes = "".join(f"<div class='portfolio-list-item'>{html.escape(str(note))}</div>" for note in getattr(backtest, "notes", [])[:3])
-    subtitle = (
-        f"{getattr(backtest, 'strategy_name', '')} · {getattr(backtest, 'start_date', '')}~{getattr(backtest, 'end_date', '')} · "
-        f"비용 {korea_format_percent(getattr(backtest, 'transaction_cost_assumption', None))}, "
-        f"슬리피지 {korea_format_percent(getattr(backtest, 'slippage_assumption', None))}, "
-        f"세금 {korea_format_percent(getattr(backtest, 'tax_assumption', None))}"
-    )
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            <div class="korea-card-subtitle">{html.escape(subtitle)}</div>
-            <div class="korea-metric-grid">{metric_html}</div>
-            {notes if notes else _korea_empty_html("백테스트 메모가 없습니다.")}
-        </div>
-        """
-    )
+    subtitle = f"{getattr(backtest, 'strategy_name', '')} · {getattr(backtest, 'start_date', '')}~{getattr(backtest, 'end_date', '')}"
+    st.html(f'<div class="korea-card compact"><div class="korea-card-subtitle">{html.escape(subtitle)}</div><div class="korea-metric-grid">{metric_html}</div>{notes}</div>')
 
 
 def render_korea_portfolio_action_queue(scores: list[Any]) -> None:
+    render_module_anchor("portfolioReviewQueue")
+    _korea_module_title("포트폴리오 검토 큐", "관심종목을 검토, 관찰, 리스크 관리 후보로 나눈 다음 확인 순서를 보여줍니다.")
     rows = []
     for score in scores[:10]:
         grade = getattr(score, "recommendation_grade", "NEUTRAL")
-        rows.append(
-            {
-                "검토": _korea_badge(_korea_action_label(str(grade)), _korea_grade_badge_class(str(grade))),
-                "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"),
-                "등급": korea_format_grade(grade),
-                "점수": korea_format_score(getattr(score, "total_score", None)),
-                "신뢰도": korea_format_confidence(getattr(score, "confidence", None)),
-                "최대비중": korea_format_percent(getattr(score, "max_suggested_weight", None)),
-                "리스크": _korea_evidence(", ".join(getattr(score, "risk_flags", [])[:2]) or "중대 플래그 없음"),
-            }
-        )
-    _korea_module_title("포트폴리오 검토 큐", "관심종목을 검토, 관찰, 리스크 관리 후보로 나눠 다음 점검 순서를 보여줍니다.")
-    st.html(
-        f"""
-        <div class="korea-card compact">
-            {_korea_table_html(rows)}
-        </div>
-        """
-    )
+        rows.append({"검토": _korea_badge(_korea_action_label(str(grade)), _korea_grade_badge_class(str(grade))), "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"), "등급": korea_format_grade(grade), "점수": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "최대비중": korea_format_percent(getattr(score, "max_suggested_weight", None)), "리스크": _korea_evidence(", ".join(getattr(score, "risk_flags", [])[:2]) or "중요 플래그 없음")})
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
+
+
+def render_korea_advanced_module_summary(data: dict[str, Any], scores: list[Any]) -> None:
+    render_module_anchor("advancedModuleSummary")
+    modules = [("investmentAlgorithm", bool(scores), "점수·등급·신뢰도·기대수익·하방위험"), ("factorHeatmap", bool(scores), "팩터별 강약과 관련 근거"), ("supplyDemandRadar", bool(scores), "외국인·기관·연기금 수급"), ("disclosureRadar", bool(data.get("disclosures")), "공시·이벤트 리스크"), ("valueUpRadar", bool(data.get("valueUpCandidates")), "저PBR·주주환원·밸류업"), ("backtestAccuracy", bool(data.get("backtest")), "성과 검증과 신뢰도 근거"), ("portfolioReviewQueue", bool(scores), "비중·관찰·리스크 점검"), ("decisionFlow", bool(data.get("investmentOS")), "검토 단계를 한 흐름으로 연결"), ("signalConflictMatrix", bool(data.get("investmentOS")), "긍정/부정 신호 충돌"), ("positionSizingRiskBudget", bool(data.get("investmentOS")), "손절 기준 기반 리스크 예산")]
+    _korea_module_title("고도화 모듈 요약", "각 모듈이 어떤 근거를 제공하는지 보고 바로 이동합니다.", f"{len(modules)}개 모듈")
+    cols = st.columns(3)
+    for idx, (module_key, active, description) in enumerate(modules):
+        with cols[idx % 3]:
+            if st.button(f"{formatModuleLabel(module_key)} · {'사용 가능' if active else '데이터 부족'}", key=_korea_widget_key("module_summary", module_key), use_container_width=True, help=description):
+                update_korea_context(selectedModule=module_key, selectedMetric=MODULE_DEFAULT_METRIC.get(module_key), sourceModule="advancedModuleSummary")
+
+
+def _render_os_rows(rows: list[dict[str, Any]], title: str, subtitle: str, module_key: str) -> None:
+    render_module_anchor(module_key)
+    _korea_module_title(title, subtitle)
+    st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
+
+
+def render_korea_decision_flow(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("decisionFlow", []):
+        rows.append({"단계": getattr(item, "title", "-"), "상태": _korea_badge(getattr(item, "status", "-"), "good" if getattr(item, "status", "") == "통과" else "warn"), "점수": korea_format_score(getattr(item, "score", None)), "액션 후보": getattr(item, "candidate_action", "관찰"), "근거": _korea_evidence(" / ".join(getattr(item, "primary_evidence", [])[:2]) or getattr(item, "blocking_reason", ""))})
+    _render_os_rows(rows, "의사결정 흐름", "시장→후보→리스크→검증→결론 순서로 보류 사유를 확인합니다.", "decisionFlow")
+
+
+def render_korea_signal_conflict_matrix(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("signalConflicts", []):
+        direction = getattr(item, "direction", "neutral")
+        tone = "good" if direction == "positive" else "risk" if direction == "negative" else "muted"
+        rows.append({"신호": getattr(item, "signal", "-"), "방향": _korea_badge(direction, tone), "강도": korea_format_score(getattr(item, "strength", None)), "충돌": getattr(item, "conflict_with", None) or "-", "근거": _korea_evidence(getattr(item, "evidence", ""))})
+    _render_os_rows(rows, "신호 충돌 매트릭스", "좋은 신호와 나쁜 신호가 동시에 있는지 분리해서 봅니다.", "signalConflictMatrix")
+
+
+def render_korea_position_sizing_budget(os_data: dict[str, Any]) -> None:
+    item = os_data.get("positionSizing")
+    rows = [] if item is None else [{"상태": getattr(item, "status", "-"), "진입 기준": korea_format_krw(getattr(item, "entry_price", None)), "손절 기준": korea_format_krw(getattr(item, "stop_price", None)), "허용손실": korea_format_percent(getattr(item, "max_loss_pct", None)), "최대금액": korea_format_krw(getattr(item, "max_position_value", None)), "최대수량": getattr(item, "max_quantity", None) if getattr(item, "max_quantity", None) is not None else "-", "액션 후보": getattr(item, "action_label", "관찰")}]
+    _render_os_rows(rows, "포지션 리스크 예산", "손절 기준과 총자산 리스크 한도로 최대 검토 수량을 계산합니다.", "positionSizingRiskBudget")
+
+
+def render_korea_scenario_stress_tests(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("scenarios", []):
+        rows.append({"시나리오": getattr(item, "label", "-"), "상태": _korea_badge(getattr(item, "status", "-"), "risk" if getattr(item, "status", "") == "방어 우선" else "good"), "영향": korea_format_percent(getattr(item, "impact_pct", None), signed=True), "액션 후보": getattr(item, "candidate_action", "관찰"), "근거": _korea_evidence(" / ".join(getattr(item, "evidence", [])[:2]))})
+    _render_os_rows(rows, "시나리오 스트레스 테스트", "환율·금리·지수·유동성 충격에서 기대값이 어떻게 흔들리는지 봅니다.", "scenarioStressTest")
+
+
+def render_korea_thesis_tracker(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("theses", []):
+        rows.append({"종목": f"{getattr(item, 'name', '-') or '-'} {getattr(item, 'code', '') or ''}", "상태": _korea_badge(getattr(item, "status", "-"), "warn" if "반증" in getattr(item, "status", "") else "info"), "핵심 가설": _korea_evidence(getattr(item, "core_view", "")), "무효화 조건": _korea_evidence(" / ".join(getattr(item, "invalidation_rules", [])[:2])), "다음 점검": getattr(item, "next_review", "-")})
+    _render_os_rows(rows, "투자 가설 트래커", "가설, 근거, 반증 조건을 한 카드에서 추적합니다.", "investmentThesisTracker")
+
+
+def render_korea_catalyst_calendar(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("catalysts", []):
+        rows.append({"일자": getattr(item, "date", "-"), "종목": getattr(item, "code", "-") or "-", "이벤트": _korea_evidence(getattr(item, "title", "")), "심각도": _korea_badge(getattr(item, "severity", "-"), "risk" if getattr(item, "severity", "") == "high" else "muted"), "영향": getattr(item, "expected_effect", "-")})
+    _render_os_rows(rows, "촉매·이벤트 캘린더", "공시, 실적, 정책 이벤트를 검토 흐름에 연결합니다.", "catalystEventCalendar")
+
+
+def render_korea_prediction_calibration(os_data: dict[str, Any]) -> None:
+    item = os_data.get("calibration")
+    rows = [] if item is None else [{"상태": getattr(item, "status", "-"), "P@10": korea_format_percent(getattr(item, "precision_at_10", None)), "Rank IC": _safe_sharpe_text(getattr(item, "rank_ic", None)), "Hit Ratio": korea_format_percent(getattr(item, "hit_ratio", None)), "Win Rate": korea_format_percent(getattr(item, "win_rate", None)), "신뢰도 적용": getattr(item, "confidence_adjustment", "-")}]
+    _render_os_rows(rows, "예측 검증·캘리브레이션", "모델 점수가 실제 성과로 이어졌는지 확인하고 confidence를 보수적으로 조정합니다.", "predictionCalibration")
+
+
+def render_korea_risk_alert_rules(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("riskAlerts", []):
+        rows.append({"알림": getattr(item, "title", "-"), "상태": _korea_badge(getattr(item, "status", "-"), "risk" if getattr(item, "status", "") == "활성" else "muted"), "조건": getattr(item, "trigger", "-"), "현재값": getattr(item, "current_value", "-"), "액션 후보": getattr(item, "candidate_action", "관찰")})
+    _render_os_rows(rows, "리스크 알림 규칙", "시장·가격·공시·수급 위험이 켜졌는지 확인합니다.", "riskAlertRules")
+
+
+def render_korea_similar_case_library(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("similarCases", []):
+        rows.append({"유형": getattr(item, "label", "-"), "표본": getattr(item, "sample_size", 0), "승률": korea_format_percent(getattr(item, "win_rate", None)), "평균성과": korea_format_percent(getattr(item, "average_forward_return", None), signed=True), "최대낙폭": korea_format_percent(getattr(item, "max_drawdown", None)), "근거": _korea_evidence(" / ".join(getattr(item, "evidence", [])[:2]))})
+    _render_os_rows(rows, "유사 사례 라이브러리", "비슷한 섹터·점수·리스크 후보의 성과를 참고 자료로 봅니다.", "similarCaseLibrary")
+
+
+def render_korea_post_review_notebook(os_data: dict[str, Any]) -> None:
+    rows = []
+    for item in os_data.get("postReview", []):
+        rows.append({"종목": getattr(item, "code", "-") or "-", "상태": getattr(item, "status", "-"), "R배수": _safe_sharpe_text(getattr(item, "realized_r_multiple", None)), "20D 성과": korea_format_percent(getattr(item, "forward_return_20d", None), signed=True), "드리프트": getattr(item, "drift_status", "-"), "다음": getattr(item, "next_action", "-")})
+    _render_os_rows(rows, "사후 리뷰 노트", "검토 후 성과를 누적해 약한 신호 유형을 줄입니다.", "postReviewNotebook")
+
+
+def render_korea_investment_os_section(os_data: dict[str, Any]) -> None:
+    _korea_module_title("Korea Investment OS v2", "검토 흐름, 충돌, 리스크 예산, 시나리오, 가설, 촉매, 검증, 리뷰를 연결한 의사결정 보드입니다.", "주문 기능 없음")
+    if not os_data:
+        st.html(f'<div class="korea-card compact">{_korea_empty_html("Investment OS 데이터가 없습니다.", "한국 알파 데이터가 준비되면 자동으로 표시됩니다.")}</div>')
+        return
+    render_korea_decision_flow(os_data)
+    left, right = st.columns([1, 1])
+    with left:
+        render_korea_signal_conflict_matrix(os_data)
+        render_korea_position_sizing_budget(os_data)
+        render_korea_thesis_tracker(os_data)
+        render_korea_prediction_calibration(os_data)
+        render_korea_similar_case_library(os_data)
+    with right:
+        render_korea_scenario_stress_tests(os_data)
+        render_korea_catalyst_calendar(os_data)
+        render_korea_risk_alert_rules(os_data)
+        render_korea_post_review_notebook(os_data)
 
 
 def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int) -> None:
+    init_korea_interaction_state()
     st.markdown('<div class="portfolio-shell korea-shell">', unsafe_allow_html=True)
     st.markdown(
         """
-        <div class="portfolio-head">
-            <div>
-                <div class="portfolio-eyebrow">Korea Alpha Engine</div>
-                <div class="portfolio-title">한국 주식 초과수익 후보와 리스크를 한 번에 보는 알고리즘 보드</div>
-                <div class="portfolio-subtitle">주문 실행이 아닌 검토 후보 보드입니다. 모든 판단에는 점수, 신뢰도, 기대수익 범위, 하방위험, 근거, 데이터 기준일과 모델 버전을 함께 표시합니다.</div>
-            </div>
-        </div>
+        <div class="portfolio-head"><div><div class="portfolio-eyebrow">Korea Alpha Engine</div><div class="portfolio-title">한국 주식 초과수익 후보와 리스크를 한 번에 보는 알고리즘 보드</div><div class="portfolio-subtitle">주문 실행이 아닌 검토 후보 보드입니다. 모든 판단은 점수, 신뢰도, 기대수익 범위, 하방위험, 근거, 데이터 기준일과 함께 표시합니다.</div></div></div>
         """,
         unsafe_allow_html=True,
     )
+    render_korea_context_bar("korea_alpha")
+    render_explanation_panel(key_scope="korea_alpha")
     with st.expander("한국 알파 필터", expanded=False):
         market_filter = st.multiselect("시장", ["KOSPI", "KOSDAQ", "ETF"], default=["KOSPI", "KOSDAQ"], key=f"korea_market_filter_{refresh_token}")
         min_score = st.slider("최소 점수", 0, 100, 0, 5, key=f"korea_min_score_{refresh_token}")
-        grade_filter = st.multiselect(
-            "등급",
-            ["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"],
-            default=["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"],
-            format_func=korea_format_grade,
-            key=f"korea_grade_filter_{refresh_token}",
-        )
+        grade_filter = st.multiselect("등급", ["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], default=["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], format_func=korea_format_grade, key=f"korea_grade_filter_{refresh_token}")
     live_market_status = build_live_korea_market_status(snapshot)
     data = getKoreaDashboardData({"markets": market_filter, "limit": 12, "market_status": live_market_status})
-    all_scores = [
-        score
-        for score in data.get("scores", [])
-        if getattr(score, "total_score", 0) >= min_score and getattr(score, "recommendation_grade", "") in grade_filter
-    ]
+    all_scores = [score for score in data.get("scores", []) if getattr(score, "total_score", 0) >= min_score and getattr(score, "recommendation_grade", "") in grade_filter]
     all_scores = sorted(all_scores, key=lambda row: getattr(row, "total_score", 0), reverse=True)
     data["topCandidates"] = all_scores[:12]
     top_cols = st.columns([1, 1.25, 1])
@@ -5467,6 +5490,8 @@ def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int
         render_korea_top_candidates_card(data["topCandidates"])
     with top_cols[2]:
         render_korea_risk_control_panel(data)
+    render_korea_advanced_module_summary(data, all_scores)
+    render_korea_investment_os_section(data.get("investmentOS", {}))
     render_korea_recommendation_table(all_scores)
     render_korea_signal_breakdown(all_scores)
     heat_col, flow_col = st.columns([1.2, 1])
@@ -5481,7 +5506,7 @@ def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int
         render_korea_value_up_radar(data.get("valueUpCandidates", []))
     render_korea_backtest_accuracy_panel(data["backtest"])
     render_korea_portfolio_action_queue(all_scores)
-    st.caption("Mock mode: KRX/DART/KIND 실시간 어댑터가 붙기 전까지는 데모 데이터 기반입니다. 실제 매수·매도 주문 기능은 제공하지 않습니다.")
+    st.caption("Mock mode: 공식 실시간 주문 기능은 제공하지 않습니다. 실제 매매 전 원천 데이터와 공시를 반드시 재확인하세요.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -5492,7 +5517,7 @@ def parse_portfolio_text(text: str) -> tuple[list[dict[str, Any]], list[str]]:
     try:
         df = pd.read_csv(io.StringIO(text.strip()))
     except Exception as exc:
-        return [], [f"CSV 파싱 실패: {exc}"]
+        return [], [f"CSV 읽기 오류: {exc}"]
     required = {"code", "qty", "avg_price"}
     missing = required - set(df.columns)
     if missing:
@@ -5503,7 +5528,7 @@ def parse_portfolio_text(text: str) -> tuple[list[dict[str, Any]], list[str]]:
         qty = safe_float(row.get("qty"))
         avg_price = safe_float(row.get("avg_price"))
         if len(code) != 6 or qty is None or avg_price is None:
-            errors.append(f"{idx + 1}행: code/qty/avg_price 확인 필요")
+            errors.append(f"{idx + 1}행 code/qty/avg_price 확인 필요")
             continue
         rows.append(
             {
@@ -5529,20 +5554,20 @@ def render_portfolio_section(
     holdings, errors = parse_portfolio_text(holdings_text)
     regime = build_market_regime_output(snapshot)
 
-    if errors:
-        for err in errors:
-            st.warning(err)
+    for err in errors:
+        st.warning(err)
+
     cash_pct = cash / total_assets * 100 if total_assets > 0 else 0.0
     cols = st.columns(4)
     cols[0].metric("총자산", f"{total_assets:,.0f}원")
     cols[1].metric("현금", f"{cash:,.0f}원")
-    cols[2].metric("현금비중", f"{cash_pct:.1f}%")
+    cols[2].metric("현금 비중", f"{cash_pct:.1f}%")
     cols[3].metric("시장 국면", f"{regime_label_ko(regime.regime)} / {regime.score}")
-    st.caption(f"마지막 조회 시각: {last_refresh}")
+    st.caption(f"데이터 기준: {last_refresh}")
 
     if not holdings:
-        st.info("사이드바의 보유종목 CSV에 `code,qty,avg_price,sector` 형식으로 입력하면 포트폴리오 리스크가 계산됩니다.")
-        st.code("code,qty,avg_price,sector\n005930,10,75000,반도체\n034020,5,25000,원전", language="text")
+        st.info("보유종목 CSV를 입력하면 포지션 리스크와 청산 우선순위를 계산합니다. 형식은 `code,qty,avg_price,sector`입니다.")
+        st.code("code,qty,avg_price,sector\n005930,10,75000,반도체\n034020,5,25000,에너지", language="text")
         return
 
     table_rows: list[str] = []
@@ -5602,15 +5627,15 @@ def render_portfolio_section(
 
     max_sector = max((value / total_assets * 100 for value in sector_exposure.values()), default=0.0) if total_assets > 0 else 0.0
     if cash_pct < regime.recommended_cash_range[0]:
-        st.warning(f"현재 현금비중 {cash_pct:.1f}%는 권장 하단 {regime.recommended_cash_range[0]}%보다 낮습니다.")
+        st.warning(f"현재 현금 비중 {cash_pct:.1f}%는 권장 하단 {regime.recommended_cash_range[0]}%보다 낮습니다.")
     if max_sector > RISK_DEFAULTS["max_sector_pct"] * 100:
-        st.warning(f"단일 섹터 노출 {max_sector:.1f}%가 기본 한도 {RISK_DEFAULTS['max_sector_pct'] * 100:.0f}%를 초과합니다.")
+        st.warning(f"섹터 집중도 {max_sector:.1f}%가 기본 한도 {RISK_DEFAULTS['max_sector_pct'] * 100:.0f}%를 넘었습니다.")
 
     st.html(
         f"""
         <table class="command-table">
             <thead>
-                <tr><th>종목</th><th>수량</th><th>현재가</th><th>손익률</th><th>손절</th><th>손절시 총자산 손실</th><th>섹터</th></tr>
+                <tr><th>종목</th><th>수량</th><th>현재가</th><th>수익률</th><th>손절</th><th>손절 시 총자산 손실</th><th>섹터</th></tr>
             </thead>
             <tbody>{''.join(table_rows)}</tbody>
         </table>
@@ -5622,22 +5647,22 @@ def render_portfolio_section(
         f"""
         <table class="command-table">
             <thead>
-                <tr><th>종목</th><th>상태</th><th>Hard stop</th><th>1차 익절</th><th>Runner</th><th>신뢰도</th></tr>
+                <tr><th>종목</th><th>상태</th><th>Hard stop</th><th>1차 목표</th><th>Runner</th><th>신뢰도</th></tr>
             </thead>
             <tbody>{''.join(sorted_exit_rows)}</tbody>
         </table>
         """
     )
-    st.caption(f"추정 포트폴리오 평가금액: {portfolio_value:,.0f}원")
+    st.caption(f"현금 포함 추정 포트폴리오 가치: {portfolio_value:,.0f}원")
 
 
 def render_settings_section() -> None:
     st.markdown('<div class="section-title">Settings</div>', unsafe_allow_html=True)
-    st.write("현재 v1 기본 리스크 설정입니다. 사이드바에서 총자산, 현금, 거래비용, 슬리피지, 보유 CSV를 조정할 수 있습니다.")
+    st.write("핵심 리스크 기본값과 API 연결 상태를 확인합니다. 실제 주문 기능은 제공하지 않습니다.")
     kis_status = "활성" if kis_enabled() else "비활성 - KIS_APP_KEY/KIS_APP_SECRET 필요"
-    st.info(f"KIS 공식 현재가 연동: {kis_status}")
+    st.info(f"KIS 공식 현재가 사용 상태: {kis_status}")
     settings_rows = "".join(
-        f"<tr><td>{html.escape(key)}</td><td>{value}</td></tr>"
+        f"<tr><td>{html.escape(str(key))}</td><td>{html.escape(str(value))}</td></tr>"
         for key, value in RISK_DEFAULTS.items()
     )
     st.html(
@@ -5648,6 +5673,7 @@ def render_settings_section() -> None:
         </table>
         """
     )
+
 
 
 def append_code_to_sidebar(code: str) -> None:
@@ -5661,7 +5687,7 @@ def append_code_to_sidebar(code: str) -> None:
     if code not in codes:
         codes.append(code)
     st.session_state.pending_sidebar_codes_text = "\n".join(codes[:15])
-    st.session_state.pending_sidebar_message = f"{code} 관심종목 추가 완료"
+    st.session_state.pending_sidebar_message = f"{code} 관심종목에 추가했습니다."
 
 
 def _candidate_display_rows(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -5672,7 +5698,7 @@ def _candidate_display_rows(candidates: list[dict[str, Any]]) -> list[dict[str, 
                 "순위": idx,
                 "종목": f"{item.get('name')} ({item.get('code')})",
                 "시장": item.get("market"),
-                "분류": item.get("category"),
+                "유형": item.get("category"),
                 "발굴점수": item.get("discovery_score"),
                 "주도력": item.get("leadership_score"),
                 "기대값": "unavailable" if item.get("expected_edge") is None else f"{item.get('expected_edge'):+.2f}%",
@@ -5689,12 +5715,12 @@ def _candidate_display_rows(candidates: list[dict[str, Any]]) -> list[dict[str, 
 def render_alpha_discovery_summary(refresh_token: int) -> None:
     requested = bool(st.session_state.get("discovery_scan_requested", False))
     if not requested:
-        st.info("Alpha Discovery는 버튼 실행 후 Dashboard 요약에 표시됩니다.")
+        st.info("Alpha Discovery 스캔을 실행하면 Dashboard 요약에 상위 후보가 표시됩니다.")
         return
     max_symbols = int(st.session_state.get("discovery_max_symbols", 220))
     candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
     if not candidates:
-        st.warning("스캔 결과가 없습니다. 데이터 품질 또는 네트워크 상태를 확인하세요.")
+        st.warning("상위 후보를 찾지 못했습니다. 데이터 품질 또는 시장 필터를 확인하세요.")
         return
     top = candidates[0]
     st.html(
@@ -5707,7 +5733,7 @@ def render_alpha_discovery_summary(refresh_token: int) -> None:
                 </div>
                 <div class="insight-badge" style="background:#0f766e;">{float(top.get('discovery_score') or 0):.0f}점</div>
             </div>
-            <div class="thesis">전체 {total:,}개 중 {scanned:,}개 스캔. 상위 후보는 관심종목에 추가해 상세 손익비와 체결 품질을 확인하세요.</div>
+            <div class="thesis">전체 {total:,}개 중 {scanned:,}개를 스캔했습니다. 발굴 후보는 검토용이며 가격, 손익비, 공시 위험을 함께 확인합니다.</div>
         </div>
         """
     )
@@ -5739,22 +5765,22 @@ def render_dashboard_extension_summary(
         exit_plan = build_exit_plan({}, pd.DataFrame())
 
     with cols[1]:
-        warning_text = exec_plan.warnings[0] if exec_plan.warnings else "유동성·비용 조건을 계속 확인합니다."
+        warning_text = exec_plan.warnings[0] if exec_plan.warnings else "유동성과 주문 비용을 점검합니다."
         st.html(
             f"""
             <div class="korea-card compact">
-                <div class="korea-card-title">체결 품질</div>
+                <div class="korea-card-title">실행 품질</div>
                 <div class="korea-score">{exec_plan.execution_quality_score:.0f}/100</div>
                 <div class="portfolio-card-sub">{html.escape(exec_plan.recommended_order_style)}<br/>{html.escape(warning_text)}</div>
             </div>
             """
         )
     with cols[2]:
-        rule_text = exit_plan.invalidation_rules[0] if exit_plan.invalidation_rules else "손절·시간 손절 규칙을 유지합니다."
+        rule_text = exit_plan.invalidation_rules[0] if exit_plan.invalidation_rules else "손절과 시간 손절 규칙을 점검합니다."
         st.html(
             f"""
             <div class="korea-card compact">
-                <div class="korea-card-title">청산 상태</div>
+                <div class="korea-card-title">청산 계획</div>
                 <div class="korea-score" style="font-size:1.16rem;">{html.escape(exit_plan.status)}</div>
                 <div class="portfolio-card-sub">신뢰도 {exit_plan.exit_confidence:.0f}<br/>{html.escape(rule_text)}</div>
             </div>
@@ -5765,7 +5791,7 @@ def render_dashboard_extension_summary(
             kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
         except Exception as exc:
             kill_state = {"active": False, "reason": f"ledger unavailable: {exc}", "sample_size": 0, "hit_rate": None}
-        state_text = "강등" if kill_state.get("active") else "정상"
+        state_text = "활성" if kill_state.get("active") else "정상"
         tone = "warn" if kill_state.get("active") else "good"
         st.html(
             f"""
@@ -5781,7 +5807,7 @@ def render_dashboard_extension_summary(
 def render_alpha_discovery_section(refresh_token: int) -> None:
     st.markdown('<div class="section-title">Alpha Discovery</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="small-note">KOSPI/KOSDAQ 전체 유니버스에서 상대강도, 52주 고점 근접, 거래대금 급증, 눌림목, 급락장 생존주, 매수 금지 후보를 캐시형으로 탐색합니다.</div>',
+        '<div class="small-note">KOSPI/KOSDAQ 후보를 스캔해 상대강도, 신고가 근접, 거래대금, 눌림목, 생존주 조건을 검토합니다. 결과는 매수 지시가 아니라 검토 후보입니다.</div>',
         unsafe_allow_html=True,
     )
     max_symbols = st.slider(
@@ -5790,7 +5816,7 @@ def render_alpha_discovery_section(refresh_token: int) -> None:
         max_value=1000,
         value=int(st.session_state.get("discovery_max_symbols", 220)),
         step=50,
-        help="전체시장 스캔은 시간이 걸릴 수 있어 v1에서는 캐시 기반으로 점진 실행합니다.",
+        help="스캔 수가 많을수록 시간이 오래 걸립니다.",
     )
     st.session_state.discovery_max_symbols = max_symbols
     col_run, col_clear = st.columns([1, 1])
@@ -5799,20 +5825,20 @@ def render_alpha_discovery_section(refresh_token: int) -> None:
             st.session_state.discovery_scan_requested = True
             run_alpha_discovery_scan.clear()
     with col_clear:
-        if st.button("스캔 캐시 유지/결과 보기", use_container_width=True):
+        if st.button("스캔 결과 새로고침", use_container_width=True):
             st.session_state.discovery_scan_requested = True
 
     if not st.session_state.get("discovery_scan_requested", False):
-        st.info("버튼을 누르면 스캔을 시작합니다. 기존 대시보드 로딩은 스캔과 분리되어 있습니다.")
+        st.info("버튼을 누르면 후보 스캔을 시작합니다. 초기 로딩을 막기 위해 수동 실행 방식으로 유지합니다.")
         return
 
-    with st.spinner("전체시장 후보를 스캔 중입니다. 처음 실행은 시간이 걸릴 수 있습니다."):
+    with st.spinner("전체시장 후보를 스캔하는 중입니다. 종목 수에 따라 시간이 걸릴 수 있습니다."):
         candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
-    st.caption(f"상장 유니버스 {total:,}개 중 {scanned:,}개 스캔 · 상위 {len(candidates)}개 표시")
+    st.caption(f"전체 {total:,}개 중 {scanned:,}개 스캔 · 후보 {len(candidates)}개")
     if warnings:
         st.warning(" / ".join(warnings[:5]))
     if not candidates:
-        st.error("표시할 후보가 없습니다. 데이터 공급자 상태를 확인하세요.")
+        st.error("표시할 후보가 없습니다. 데이터 품질 또는 필터 조건을 확인하세요.")
         return
 
     st.dataframe(pd.DataFrame(_candidate_display_rows(candidates)), hide_index=True, use_container_width=True)
@@ -5828,10 +5854,10 @@ def render_alpha_discovery_section(refresh_token: int) -> None:
 
     with st.expander("상위 후보 근거"):
         for item in candidates[:10]:
-            positives = " / ".join(item.get("positive_reasons") or ["근거 unavailable"])
+            positives = " / ".join(item.get("positive_reasons") or ["긍정 근거 unavailable"])
             negatives = " / ".join(item.get("negative_reasons") or ["부정 근거 없음"])
             st.markdown(f"**{item.get('name')} ({item.get('code')})** · {item.get('category')} · {item.get('discovery_score'):.0f}점")
-            st.caption(f"우호: {positives}")
+            st.caption(f"긍정: {positives}")
             st.caption(f"주의: {negatives}")
 
 
@@ -5845,9 +5871,9 @@ def render_signal_outcome_section(
     init_db(SIGNAL_LEDGER_DB)
     kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
     metric_cols = st.columns(4)
-    metric_cols[0].metric("Kill-switch", "강등" if kill_state.get("active") else "정상")
-    metric_cols[1].metric("성과 표본", str(kill_state.get("sample_size")))
-    metric_cols[2].metric("적중률", "N/A" if kill_state.get("hit_rate") is None else f"{kill_state.get('hit_rate') * 100:.1f}%")
+    metric_cols[0].metric("Kill-switch", "활성" if kill_state.get("active") else "정상")
+    metric_cols[1].metric("검증 표본", str(kill_state.get("sample_size")))
+    metric_cols[2].metric("Hit rate", "N/A" if kill_state.get("hit_rate") is None else f"{kill_state.get('hit_rate') * 100:.1f}%")
     metric_cols[3].metric("상태", str(kill_state.get("reason")))
 
     market_score, _ = market_regime(snapshot)
@@ -5885,71 +5911,34 @@ def render_signal_outcome_section(
 
     if st.button("저장 신호 사후성과 업데이트", use_container_width=True):
         updated = 0
-        recent = list_recent_signals(SIGNAL_LEDGER_DB, limit=80)
-        benchmark_hist = load_symbol_history("KS11", refresh_token, periods=160)
-        for raw in recent:
-            try:
-                generated_at = pd.Timestamp(raw["generated_at"]).normalize()
-            except Exception:
-                generated_at = pd.Timestamp.today().normalize()
-            hist = load_symbol_history(str(raw["code"]), refresh_token, periods=160)
+        for record in list_recent_signals(SIGNAL_LEDGER_DB, limit=50):
+            hist = load_symbol_history(record.code, refresh_token, periods=260)
             if hist.empty:
                 continue
-            after = hist[hist.index >= generated_at]
-            if len(after) < 2:
-                continue
-            name = str(raw.get("name", raw["code"]))
-            plan = risk_plan_for_stock(str(raw["code"]), name, hist)
-            record = SignalRecord(
-                signal_id=str(raw["signal_id"]),
-                generated_at=str(raw["generated_at"]),
-                code=str(raw["code"]),
-                name=name,
-                action=str(raw["action"]),
-                score=float(raw["score"]),
-                confidence=float(raw["confidence"]),
-                market_regime=str(raw["market_regime"]),
-                leadership_score=safe_float(raw.get("leadership_score")),
-                expected_edge=safe_float(raw.get("expected_edge")),
-                risk_reward_ratio=safe_float(raw.get("risk_reward_ratio")),
-                position_size_recommendation=safe_float(raw.get("position_size_recommendation")) or 0.0,
-                data_quality_score=safe_float(raw.get("data_quality_score")),
-                reasons_positive=[],
-                reasons_negative=[],
-                source_snapshot_id=raw.get("source_snapshot_id"),
-            )
-            for horizon in (1, 5, 20, 60):
-                outcome = compute_forward_outcome(
-                    record,
-                    after,
-                    horizon_days=horizon,
-                    benchmark_after_signal=benchmark_hist[benchmark_hist.index >= generated_at] if not benchmark_hist.empty else None,
-                    target_price=safe_float(plan.get("resistance")),
-                    stop_price=safe_float(plan.get("stop")),
-                )
+            outcome = compute_forward_outcome(record, hist)
+            if outcome is not None:
                 store_outcome(SIGNAL_LEDGER_DB, outcome)
                 updated += 1
-        st.success(f"{updated}개 사후성과 레코드를 업데이트했습니다.")
+        st.success(f"{updated}개 신호의 사후 성과를 업데이트했습니다.")
 
     recent = list_recent_signals(SIGNAL_LEDGER_DB, limit=30)
     if not recent:
-        st.info("아직 저장된 live signal이 없습니다.")
+        st.info("저장된 신호가 없습니다.")
         return
-    display_rows = []
-    for raw in recent:
-        display_rows.append(
-            {
-                "시간": raw.get("generated_at"),
-                "종목": f"{raw.get('name')} ({raw.get('code')})",
-                "판단": action_label_ko(str(raw.get("action"))),
-                "점수": raw.get("score"),
-                "신뢰도": raw.get("confidence"),
-                "국면": regime_label_ko(str(raw.get("market_regime"))),
-                "기대값": "N/A" if raw.get("expected_edge") is None else f"{raw.get('expected_edge'):+.2f}%",
-                "손익비": "N/A" if raw.get("risk_reward_ratio") is None else f"{raw.get('risk_reward_ratio'):.2f}x",
-            }
-        )
-    st.dataframe(pd.DataFrame(display_rows), hide_index=True, use_container_width=True)
+    rows = [
+        {
+            "일시": record.generated_at[:19],
+            "종목": f"{record.name} ({record.code})",
+            "행동 후보": action_label_ko(record.action),
+            "점수": record.score,
+            "국면": regime_label_ko(record.market_regime),
+            "기대값": "N/A" if record.expected_edge is None else f"{record.expected_edge:+.2f}%",
+            "손익비": "N/A" if record.risk_reward_ratio is None else f"{record.risk_reward_ratio:.2f}x",
+        }
+        for record in recent
+    ]
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
 
 
 def render_stocks_section(
@@ -5959,7 +5948,7 @@ def render_stocks_section(
     refresh_token: int,
     last_refresh: str,
 ) -> None:
-    st.markdown('<div class="section-title">종목 판단표</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Stocks</div>', unsafe_allow_html=True)
     market_score, _ = market_regime(snapshot)
     regime_output = build_market_regime_output(snapshot)
     kospi_snap = snapshot.get("KOSPI")
@@ -5968,12 +5957,12 @@ def render_stocks_section(
     render_watchlist_ranking(leadership_rows)
 
     if not valid_rows:
-        st.info("사이드바에 종목코드를 입력하면 종목 상세가 표시됩니다.")
+        st.info("관심종목을 입력하면 종목 상세 분석이 표시됩니다.")
         return
     options = [row["code"] for row in valid_rows]
     active_code = st.session_state.manual_active_code if st.session_state.manual_active_code in options else options[0]
     selected_code = st.selectbox(
-        "종목 상세 선택",
+        "상세 종목 선택",
         options=options,
         index=options.index(active_code),
         format_func=lambda code: f"{code} {code_to_name.get(code, STOCK_UNIVERSE_NAME_HINTS.get(code, code))}",
@@ -6011,13 +6000,13 @@ def render_stocks_section(
                 <div class="insight-panel">
                     <div class="insight-head">
                         <div>
-                            <div class="insight-kicker">투자 판단</div>
+                            <div class="insight-kicker">종목 판단</div>
                             <div class="insight-title">{html.escape(active_name)}</div>
                         </div>
                         <div class="insight-badge" style="background:{'#dc2626' if action.score >= 65 else '#2563eb' if action.score < 45 else '#64748b'};">{html.escape(action_label_ko(action.action))} / {action.score}점</div>
                     </div>
                     {reason_html}
-                    <div class="thesis">무효화 조건: 손절 기준 {format_price(plan.get('stop'))} 이탈 또는 공시 리스크 High 이상 발생.</div>
+                    <div class="thesis">진입 검토 전 손절 기준 {format_price(plan.get('stop'))}, 공시 위험, 실행 비용을 함께 확인합니다.</div>
                 </div>
                 """
             )
@@ -6027,10 +6016,10 @@ def render_stocks_section(
     with trade_cols[1]:
         render_exit_plan_card(exit_plan)
     if active_hist.empty:
-        st.warning("선택한 종목의 가격 데이터를 가져오지 못했습니다.")
+        st.warning("선택 종목의 가격 데이터를 불러오지 못했습니다.")
     else:
         st.pyplot(plot_candlestick_with_volume(active_hist, f"{active_name} ({selected_code})"), clear_figure=True)
-    st.caption(f"마지막 조회 시각: {last_refresh}")
+    st.caption(f"데이터 기준: {last_refresh}")
 
 
 def render_dashboard_section(
@@ -6041,14 +6030,15 @@ def render_dashboard_section(
     last_refresh: str,
     refresh_token: int,
 ) -> None:
-    st.markdown(f"**기준일:** `{ref_date}`  |  **마지막 조회:** `{last_refresh}`")
+    init_korea_interaction_state()
+    st.markdown(f"**기준일** `{ref_date}`  |  **최종 업데이트** `{last_refresh}`")
 
     metric_specs = [
-        ("KOSPI", "코스피", "현재 지수"),
-        ("KOSDAQ", "코스닥", "현재 지수"),
-        ("USD/KRW", "USD/KRW", "원·달러 환율"),
-        ("US 10Y", "미국 국채 10년물", "금리"),
-        ("KR 3Y", "한국 국고채 3년물", "금리"),
+        ("KOSPI", "코스피", "현재가"),
+        ("KOSDAQ", "코스닥", "현재가"),
+        ("USD/KRW", "USD/KRW", "환율"),
+        ("US 10Y", "미국 국채 10년", "금리"),
+        ("KR 3Y", "한국 국고채 3년", "금리"),
     ]
     cols = st.columns(5)
     for col, (key, title, subtitle) in zip(cols, metric_specs):
@@ -6058,6 +6048,8 @@ def render_dashboard_section(
     market_score, market_notes = market_regime(snapshot)
     regime_output = build_market_regime_output(snapshot)
     render_action_console(regime_output)
+    render_korea_context_bar("dashboard")
+    render_explanation_panel(key_scope="dashboard")
     kospi_snap = snapshot.get("KOSPI")
     kospi_close = kospi_snap.raw["Close"] if kospi_snap and kospi_snap.raw is not None and "Close" in kospi_snap.raw.columns else None
     leadership_rows = render_investment_insight_panels(snapshot, valid_rows, code_to_name, refresh_token, market_score, kospi_close, regime_output)
@@ -6069,6 +6061,7 @@ def render_dashboard_section(
     fg_label, fg_color, fg_advice = fear_greed_zone(fg_score)
     fg_score_text = "N/A" if fg_score is None else f"{fg_score:.0f}"
 
+    render_module_anchor("fearGreedIndex")
     st.markdown('<div class="section-title">공포·탐욕 지수</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="small-note">0에 가까울수록 공포, 100에 가까울수록 탐욕입니다. 극단 구간에서는 추세 추종보다 리스크 관리가 우선입니다.</div>',
@@ -6079,9 +6072,9 @@ def render_dashboard_section(
         st.pyplot(plot_fear_greed_bar(fg_score, fg_label, fg_color), clear_figure=True)
     with fg_cols[1]:
         position_text = (
-            '분할매수와 방어적 대응' if fg_score is not None and fg_score <= 44 else
-            '중립 유지와 선택적 매수' if fg_score is not None and fg_score <= 55 else
-            '분할익절과 종목 선별'
+            "분할과 방어 우선" if fg_score is not None and fg_score <= 44 else
+            "중립적 선별 검토" if fg_score is not None and fg_score <= 55 else
+            "과열 여부 확인"
         )
         st.markdown(
             f"""
@@ -6091,18 +6084,30 @@ def render_dashboard_section(
                 <div style="font-size:1.1rem; font-weight:800; margin-bottom:8px;">{fg_score_text}</div>
                 <div class="small-note" style="font-size:0.92rem; line-height:1.55;">
                     {fg_advice}<br/>
-                    이 구간에서는 <b>{position_text}</b>이 유리합니다.
+                    현재 해석: <b>{position_text}</b>
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+        if st.button(
+            "공포·탐욕 설명 보기",
+            key="fear_greed_explain_button",
+            use_container_width=True,
+            help="시장 심리 지표가 알고리즘과 리스크 관리에 어떻게 반영되는지 봅니다.",
+        ):
+            update_korea_context(
+                selectedMetric="fearGreed",
+                selectedModule="fearGreedIndex",
+                selectedFearGreedBand=fg_label,
+                sourceModule="fearGreedIndex",
+            )
 
     render_ecos_cards(refresh_token)
 
     st.markdown('<div class="section-title">주요 종목 카드</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="small-note">아래 카드를 클릭하면 상세 차트가 즉시 바뀝니다. 당일 수익률과 추세를 함께 보고 종목을 고르세요.</div>',
+        '<div class="small-note">관심종목의 현재가, 행동 후보, 기대값, 손익비, 공시 위험, 최대 검토 비중을 한 번에 확인합니다.</div>',
         unsafe_allow_html=True,
     )
     preview_rows = valid_rows[:15]
@@ -6116,9 +6121,9 @@ def render_dashboard_section(
                     st.session_state.active_code = row["code"]
                     st.rerun()
 
-    st.markdown('<div class="section-title">종목 당일 수익률 비교</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">종목 수익률 비교</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="small-note">현재 선택 종목과 비교해서 어떤 종목이 더 강한지 한눈에 보이도록 배치했습니다. 막대 클릭 대신 카드 클릭과 드롭다운을 함께 사용하세요.</div>',
+        '<div class="small-note">관심종목의 최근 1거래일 수익률을 비교합니다. 선택 종목은 아래 상세 차트와 연결됩니다.</div>',
         unsafe_allow_html=True,
     )
 
@@ -6145,20 +6150,21 @@ def render_dashboard_section(
     fig_returns, _ = build_return_figure(rows, active_code)
     st.pyplot(fig_returns, clear_figure=True)
 
+    select_options = [row["code"] for row in rows] if rows else codes_in_order
     selected_symbol = st.selectbox(
         "상세 차트 종목 선택",
-        options=[row["code"] for row in rows] if rows else codes_in_order,
-        index=([row["code"] for row in rows].index(active_code) if rows and active_code in [row["code"] for row in rows] else 0),
+        options=select_options,
+        index=(select_options.index(active_code) if active_code in select_options else 0),
         format_func=lambda code: f"{code} {code_to_name.get(code, STOCK_UNIVERSE_NAME_HINTS.get(code, code))}",
         key="detail_selector",
     )
     st.session_state.manual_active_code = selected_symbol
     st.session_state.active_code = selected_symbol
 
-    st.markdown('<div class="section-title">오늘의 멘탈 코치</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">종목 상세 차트</div>', unsafe_allow_html=True)
 
     if active_code is None:
-        st.info("상세 차트를 표시할 종목이 없습니다.")
+        st.info("상세 차트로 표시할 종목이 없습니다.")
         st.stop()
 
     active_name = code_to_name.get(active_code, STOCK_UNIVERSE_NAME_HINTS.get(active_code, active_code))
@@ -6172,11 +6178,21 @@ def render_dashboard_section(
     if market_notes:
         st.caption("시장 해석: " + " / ".join(market_notes[:3]))
 
-    st.markdown('<div class="section-title">최근 60거래일 캔들 + 거래량</div>', unsafe_allow_html=True)
+    render_module_anchor("candleVolumeChart")
+    st.markdown('<div class="section-title">최근 캔들 + 거래량</div>', unsafe_allow_html=True)
     if active_hist.empty:
-        st.warning("선택한 종목의 가격 데이터를 가져오지 못했습니다.")
+        st.warning("선택 종목의 가격 데이터를 불러오지 못했습니다.")
     else:
-        fig_candle = plot_candlestick_with_volume(active_hist, f"{active_name} ({active_code})")
+        range_label = st.radio(
+            "차트 범위",
+            ["20D", "60D", "120D", "1Y"],
+            index=1,
+            horizontal=True,
+            key=f"dashboard_candle_range_{active_code}",
+        )
+        range_count = {"20D": 20, "60D": 60, "120D": 120, "1Y": 240}.get(range_label, 60)
+        chart_hist = active_hist.tail(range_count)
+        fig_candle = plot_candlestick_with_volume(chart_hist, f"{active_name} ({active_code})")
         st.pyplot(fig_candle, clear_figure=True)
 
         _, _, _, close_c, volume_c = find_ohlcv_columns(active_hist)
@@ -6198,184 +6214,67 @@ def render_dashboard_section(
 
         summary_cols = st.columns(4)
         with summary_cols[0]:
-            st.metric("최근 종가", format_price(latest_close))
+            st.metric("현재가", format_price(latest_close))
         with summary_cols[1]:
             st.metric("5일 수익률", format_pct(r["5d"]))
         with summary_cols[2]:
             st.metric("20일 수익률", format_pct(r["20d"]))
         with summary_cols[3]:
             st.metric("거래량", korea_format_volume(latest_volume), "N/A" if vol_ratio is None else f"20일 평균 대비 {vol_ratio:.2f}x")
+        open_c, high_c, low_c, close_c, volume_c = find_ohlcv_columns(chart_hist)
+        detail_df = chart_hist[[open_c, high_c, low_c, close_c, volume_c]].dropna()
+        if not detail_df.empty:
+            date_options = list(range(len(detail_df)))
+            selected_idx = st.selectbox(
+                "거래일 상세",
+                options=date_options,
+                index=len(date_options) - 1,
+                format_func=lambda idx: detail_df.index[idx].strftime("%Y-%m-%d") if hasattr(detail_df.index[idx], "strftime") else str(detail_df.index[idx])[:10],
+                key=f"dashboard_candle_date_{active_code}_{range_label}",
+            )
+            selected_date_obj = detail_df.index[selected_idx]
+            selected_date = selected_date_obj.strftime("%Y-%m-%d") if hasattr(selected_date_obj, "strftime") else str(selected_date_obj)[:10]
+            selected_row = detail_df.iloc[selected_idx]
+            if st.button("선택 거래일 근거 연결", key=f"dashboard_candle_link_{active_code}_{selected_date}", use_container_width=True):
+                update_korea_context(
+                    selectedStockCode=active_code,
+                    selectedStockName=active_name,
+                    selectedDate=selected_date,
+                    selectedDateRange=range_label,
+                    selectedMetric="expectedReturn3M",
+                    selectedModule="candleVolumeChart",
+                    sourceModule="candleVolumeChart",
+                )
+            supply_for_date = next((row for row in getKoreaSupplyDemand(active_code) if str(getattr(row, "date", ""))[:10] == selected_date), None)
+            supply_text = "수급 데이터 없음"
+            if supply_for_date is not None:
+                flow = sum(
+                    safe_float(getattr(supply_for_date, field, 0)) or 0
+                    for field in ["foreign_net_buy", "institution_net_buy", "pension_net_buy"]
+                )
+                supply_text = f"외국인+기관+연기금 합산 {korea_format_trading_value(flow)}"
+            st.html(
+                f"""
+                <div class="korea-explanation-panel">
+                    <strong>{html.escape(active_name)} {html.escape(selected_date)} OHLCV</strong>
+                    <div class="korea-explain-muted">
+                        Open {html.escape(format_price(safe_float(selected_row[open_c])))} ·
+                        High {html.escape(format_price(safe_float(selected_row[high_c])))} ·
+                        Low {html.escape(format_price(safe_float(selected_row[low_c])))} ·
+                        Close {html.escape(format_price(safe_float(selected_row[close_c])))} ·
+                        Volume {html.escape(korea_format_volume(safe_float(selected_row[volume_c])))}
+                    </div>
+                    <div class="korea-explain-muted" style="margin-top:8px;">연결 수급: {html.escape(supply_text)}</div>
+                    <span class="korea-mini-link">수급 레이더</span><span class="korea-mini-link">리스크 큐</span><span class="korea-mini-link">공시 확인</span>
+                </div>
+                """
+            )
 
     st.markdown("---")
-    st.markdown("**출처: FinanceDataReader**")
-    st.caption(f"마지막 조회 시각: {last_refresh}")
+    st.markdown("**데이터 원천: FinanceDataReader / Naver / 공식 API 설정값**")
+    st.caption(f"데이터 기준: {last_refresh}")
     render_data_quality_banner(snapshot, valid_rows)
 
-def render_disclosure_section(
-    valid_rows: list[dict[str, Any]],
-    code_to_name: dict[str, str],
-    refresh_token: int,
-    last_refresh: str,
-) -> None:
-    st.markdown('<div class="section-title">공시정보</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="small-note">DART 최근공시를 불러와 관심 종목 중심으로 보여주고, 각 공시에 호재 / 중립 / 악재 라벨을 자동으로 붙입니다.</div>',
-        unsafe_allow_html=True,
-    )
-
-    dart_df = load_recent_disclosures(refresh_token, DART_API_TOKEN)
-    if dart_df.empty:
-        st.warning("공시 정보를 불러오지 못했습니다.")
-        st.caption(f"마지막 조회 시각: {last_refresh}")
-        return
-
-    watch_names = {row["name"] for row in valid_rows}
-    watch_codes = {row["code"] for row in valid_rows}
-    with st.form("disclosure_search_form", clear_on_submit=False):
-        filter_watchlist = st.checkbox("관심 종목만 보기", value=True, key="disclosure_watchlist_only")
-        query = st.text_input(
-            "회사명 또는 보고서명 검색",
-            placeholder="예: 삼성전자, 자기주식, 증권신고서",
-            key="disclosure_query",
-        )
-        limit = st.slider("표시 개수", min_value=5, max_value=40, value=15, step=5, key="disclosure_limit")
-        search_submit = st.form_submit_button("검색")
-
-    if "disclosure_query_applied" not in st.session_state:
-        st.session_state.disclosure_query_applied = ""
-
-    if search_submit:
-        st.session_state.disclosure_query_applied = query.strip()
-    applied_query = st.session_state.disclosure_query_applied
-    applied_watchlist = filter_watchlist
-
-    filtered = dart_df.copy()
-    if applied_watchlist:
-        name_mask = filtered["corp_name"].isin(watch_names)
-        code_mask = filtered["stock_code"].isin(watch_codes) if "stock_code" in filtered.columns else False
-        filtered = filtered[name_mask | code_mask]
-    if applied_query:
-        q = applied_query.strip()
-        mask = (
-            filtered["corp_name"].str.contains(q, case=False, na=False)
-            | filtered["report_name"].str.contains(q, case=False, na=False)
-            | filtered["submitter"].str.contains(q, case=False, na=False)
-            | filtered["note"].str.contains(q, case=False, na=False)
-            | filtered["stock_code"].str.contains(q, case=False, na=False)
-        )
-        filtered = filtered[mask]
-        if filtered.empty and applied_watchlist:
-            fallback_mask = (
-                dart_df["corp_name"].str.contains(q, case=False, na=False)
-                | dart_df["report_name"].str.contains(q, case=False, na=False)
-                | dart_df["submitter"].str.contains(q, case=False, na=False)
-                | dart_df["note"].str.contains(q, case=False, na=False)
-                | dart_df["stock_code"].str.contains(q, case=False, na=False)
-            )
-            fallback = dart_df[fallback_mask].copy()
-            if not fallback.empty:
-                filtered = fallback
-                st.info("관심 종목 필터에서 결과가 없어 전체 DART 공시에서 다시 검색했습니다.")
-
-    summary_cols = st.columns(4)
-    with summary_cols[0]:
-        st.metric("전체 공시", f"{len(dart_df):,}")
-    with summary_cols[1]:
-        st.metric("표시 중", f"{len(filtered):,}")
-    with summary_cols[2]:
-        st.metric("관심 종목", f"{len(watch_names):,}")
-    with summary_cols[3]:
-        st.metric("분석 상태", "자동 분류")
-    st.caption(f"DART API 상태: {'연결됨' if DART_API_KEY else '미설정'}")
-
-    st.caption(f"마지막 조회 시각: {last_refresh}")
-    if applied_query:
-        st.caption(f"검색어 적용됨: {applied_query}")
-    if filtered.empty:
-        st.info("조건에 맞는 공시가 없습니다.")
-        return
-
-    display_df = filtered.head(limit).copy()
-    display_df[["label", "label_reason", "label_score"]] = display_df["report_name"].apply(
-        lambda value: pd.Series(classify_disclosure(value))
-    )
-
-    st.markdown(
-        """
-        <style>
-            .disclosure-card {
-                background: rgba(255, 255, 255, 0.96);
-                border: 1px solid rgba(148, 163, 184, 0.28);
-                border-radius: 16px;
-                padding: 14px 16px;
-                margin-bottom: 12px;
-                color: #0f172a !important;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
-            }
-            .disclosure-card * {
-                color: inherit;
-            }
-            .disclosure-title {
-                font-weight: 800;
-                font-size: 1.02rem;
-                margin: 2px 0 6px 0;
-                color: #0f172a !important;
-            }
-            .disclosure-company {
-                font-weight: 800;
-                color: #111827 !important;
-            }
-            .disclosure-meta {
-                color: #475569 !important;
-                font-size: 0.86rem;
-                margin-top: 4px;
-            }
-            .disclosure-card a {
-                color: #1d4ed8 !important;
-                font-weight: 700;
-                text-decoration: none;
-            }
-            .disclosure-card a:hover {
-                text-decoration: underline;
-            }
-            .badge {
-                display: inline-block;
-                padding: 3px 10px;
-                border-radius: 999px;
-                font-size: 0.78rem;
-                font-weight: 800;
-                margin-right: 6px;
-            }
-            .badge-good { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
-            .badge-mid { background: rgba(100, 116, 139, 0.12); color: #475569; }
-            .badge-bad { background: rgba(37, 99, 235, 0.12); color: #1d4ed8; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    for _, row in display_df.iterrows():
-        badge_class = {
-            "호재": "badge-good",
-            "중립": "badge-mid",
-            "악재": "badge-bad",
-        }.get(row["label"], "badge-mid")
-
-        st.markdown(
-            f"""
-            <div class="disclosure-card">
-                <div>
-                    <span class="badge {badge_class}">{row['label']} · 점수 {int(row['label_score']):+d}</span>
-                    <span class="disclosure-company">{row['corp_name']}</span>
-                </div>
-                <div class="disclosure-title">{row['report_name']}</div>
-                <div class="disclosure-meta">{row['date']} {row['time']} · 제출인: {row['submitter']}{f" · {row['note']}" if row['note'] else ""}</div>
-                <div class="disclosure-meta">분류 근거: {row['label_reason']}</div>
-                {f'<div style="margin-top:8px;"><a href="{row["report_url"]}" target="_blank" rel="noopener noreferrer">원문 보기</a></div>' if row["report_url"] else ""}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
 
 
 def render_disclosure_section(
@@ -6384,9 +6283,9 @@ def render_disclosure_section(
     refresh_token: int,
     last_refresh: str,
 ) -> None:
-    st.markdown('<div class="section-title">공시정보</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">공시·이벤트 리스크</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="small-note">DART API로 공시를 가져와 관심 종목 중심으로 보여주고, 각 공시에 호재 / 중립 / 악재 라벨을 자동으로 붙입니다.</div>',
+        '<div class="small-note">DART 최근 공시를 관심종목과 연결해 유상증자, CB/BW, 감자, 감사의견, 소송 등 리스크를 확인합니다.</div>',
         unsafe_allow_html=True,
     )
 
@@ -6398,10 +6297,10 @@ def render_disclosure_section(
         st.session_state.disclosure_query_applied = ""
 
     with st.form("disclosure_search_form", clear_on_submit=False):
-        filter_watchlist = st.checkbox("관심 종목만 보기", value=True, key="disclosure_watchlist_only")
+        filter_watchlist = st.checkbox("관심종목만 보기", value=True, key="disclosure_watchlist_only")
         query = st.text_input(
-            "회사명 또는 보고서명 검색",
-            placeholder="예: 삼성전자, 자기주식, 증권신고서",
+            "회사명, 종목코드, 공시명 검색",
+            placeholder="예: 두산에너빌리티, 유상증자, 감사의견",
             key="disclosure_query",
         )
         limit = st.slider("표시 개수", min_value=5, max_value=40, value=15, step=5, key="disclosure_limit")
@@ -6412,10 +6311,6 @@ def render_disclosure_section(
 
     applied_query = st.session_state.disclosure_query_applied.strip()
     applied_watchlist = filter_watchlist
-
-    summary_cols = st.columns(4)
-    with summary_cols[0]:
-        st.metric("전체 공시", f"{len(dart_df):,}")
 
     filtered = dart_df.copy()
     if applied_watchlist and not filtered.empty:
@@ -6444,35 +6339,28 @@ def render_disclosure_section(
             fallback = dart_df[fallback_mask].copy()
             if not fallback.empty:
                 filtered = fallback
-                st.info("관심 종목 필터에서 결과가 없어 전체 DART 공시에서 다시 검색했습니다.")
+                st.info("관심종목에서는 찾지 못해 전체 DART 공시에서 검색했습니다.")
 
-    with summary_cols[1]:
-        st.metric("표시 중", f"{len(filtered):,}")
-    with summary_cols[2]:
-        st.metric("관심 종목", f"{len(watch_names):,}")
-    with summary_cols[3]:
-        st.metric("분석 상태", "자동 분류")
-
-    api_state = "YOUR_API_KEY" if DART_API_KEY == "YOUR_API_KEY" else "연결됨"
-    st.caption(f"DART API 상태: {api_state}")
-    st.caption(f"마지막 조회 시각: {last_refresh}")
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("전체 공시", f"{len(dart_df):,}")
+    summary_cols[1].metric("표시", f"{len(filtered):,}")
+    summary_cols[2].metric("관심종목", f"{len(watch_names):,}")
+    summary_cols[3].metric("분류", "규칙 기반")
+    api_state = "미설정" if DART_API_KEY == "YOUR_API_KEY" else "연결"
+    st.caption(f"DART API 상태: {api_state} · 데이터 기준: {last_refresh}")
     if applied_query:
-        st.caption(f"검색어 적용됨: {applied_query}")
+        st.caption(f"검색어: {applied_query}")
 
     if dart_df.empty:
-        st.info("오늘 공시가 없습니다.")
+        st.info("최근 공시 데이터를 표시할 수 없습니다.")
         return
-
     if filtered.empty:
-        if applied_query or not applied_watchlist:
-            st.info("조건에 맞는 공시가 없습니다.")
-        else:
-            st.info("오늘 공시가 없습니다.")
+        st.info("조건에 맞는 공시가 없습니다.")
         return
 
     display_df = filtered.head(limit).copy()
-    display_df[["label", "label_reason", "label_score"]] = display_df["report_name"].apply(
-        lambda value: pd.Series(classify_disclosure(value))
+    display_df[["label", "label_score", "label_reason"]] = display_df["report_name"].apply(
+        lambda value: pd.Series(disclosure_severity(value))
     )
 
     st.markdown(
@@ -6488,58 +6376,36 @@ def render_disclosure_section(
                 box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
             }
             .disclosure-card * { color: inherit; }
-            .disclosure-title {
-                font-weight: 800;
-                font-size: 1.02rem;
-                margin: 2px 0 6px 0;
-                color: #0f172a !important;
-            }
-            .disclosure-company {
-                font-weight: 800;
-                color: #111827 !important;
-            }
-            .disclosure-meta {
-                color: #475569 !important;
-                font-size: 0.86rem;
-                margin-top: 4px;
-            }
-            .disclosure-card a {
-                color: #1d4ed8 !important;
-                font-weight: 700;
-                text-decoration: none;
-            }
+            .disclosure-title { font-weight: 800; font-size: 1.02rem; margin: 2px 0 6px 0; color: #0f172a !important; }
+            .disclosure-company { font-weight: 800; color: #111827 !important; }
+            .disclosure-meta { color: #475569 !important; font-size: 0.86rem; margin-top: 4px; }
+            .disclosure-card a { color: #1d4ed8 !important; font-weight: 700; text-decoration: none; }
             .disclosure-card a:hover { text-decoration: underline; }
-            .badge {
-                display: inline-block;
-                padding: 3px 10px;
-                border-radius: 999px;
-                font-size: 0.78rem;
-                font-weight: 800;
-                margin-right: 6px;
-            }
-            .badge-good { background: rgba(220, 38, 38, 0.12); color: #b91c1c; }
-            .badge-mid { background: rgba(100, 116, 139, 0.12); color: #475569; }
-            .badge-bad { background: rgba(37, 99, 235, 0.12); color: #1d4ed8; }
+            .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:0.78rem; font-weight:800; margin-right:6px; }
+            .badge-good { background:rgba(220,38,38,0.12); color:#b91c1c; }
+            .badge-mid { background:rgba(100,116,139,0.12); color:#475569; }
+            .badge-bad { background:rgba(37,99,235,0.12); color:#1d4ed8; }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
     for _, row in display_df.iterrows():
-        badge_class = {"호재": "badge-good", "중립": "badge-mid", "악재": "badge-bad"}.get(row["label"], "badge-mid")
-        report_url = row["report_url"]
-        report_link = f'<div style="margin-top:8px;"><a href="{report_url}" target="_blank" rel="noopener noreferrer">원문 보기</a></div>' if report_url else ""
-        note_text = f" · {row['note']}" if row["note"] else ""
+        severity = str(row["label"])
+        badge_class = "badge-bad" if severity in {"High", "Critical"} else "badge-mid" if severity == "Medium" else "badge-good"
+        report_url = str(row.get("report_url", "") or "")
+        report_link = f'<div style="margin-top:8px;"><a href="{html.escape(report_url)}" target="_blank" rel="noopener noreferrer">원문 보기</a></div>' if report_url else ""
+        note_text = f" · {row['note']}" if row.get("note") else ""
         st.markdown(
             f"""
             <div class="disclosure-card">
                 <div>
-                    <span class="badge {badge_class}">{row['label']} · 점수 {int(row['label_score']):+d}</span>
-                    <span class="disclosure-company">{row['corp_name']}</span>
+                    <span class="badge {badge_class}">{html.escape(severity)} · 점수 {int(row['label_score']):+d}</span>
+                    <span class="disclosure-company">{html.escape(str(row['corp_name']))}</span>
                 </div>
-                <div class="disclosure-title">{row['report_name']}</div>
-                <div class="disclosure-meta">{row['date']} {row['time']} · 제출인: {row['submitter']}{note_text}</div>
-                <div class="disclosure-meta">분류 근거: {row['label_reason']}</div>
+                <div class="disclosure-title">{html.escape(str(row['report_name']))}</div>
+                <div class="disclosure-meta">{html.escape(str(row['date']))} {html.escape(str(row['time']))} · 제출자 {html.escape(str(row['submitter']))}{html.escape(note_text)}</div>
+                <div class="disclosure-meta">분류 근거: {html.escape(str(row['label_reason']))}</div>
                 {report_link}
             </div>
             """,
@@ -6547,184 +6413,16 @@ def render_disclosure_section(
         )
 
 
-def stock_signal(
-    code: str,
-    history: pd.DataFrame,
-    market_score: float,
-    kospi_close: pd.Series | None,
-) -> tuple[str, float, list[str]]:
-    if history is None or history.empty:
-        return "중립", 50.0, ["데이터가 부족해 중립"]
-
-    _, _, _, close_col, volume_col = find_ohlcv_columns(history)
-    close = history[close_col].dropna()
-    volume = history[volume_col].dropna() if volume_col in history.columns else pd.Series(dtype=float)
-    ret = calc_returns(close)
-
-    if len(close) < 10:
-        return "중립", 50.0, ["추세를 판단하기에 데이터가 부족합니다"]
-
-    score = 50.0
-    reasons: list[str] = []
-
-    def add(value: float | None, weight: float, cap: float, label: str) -> None:
-        nonlocal score
-        if value is None:
-            return
-        clipped = max(min(value, cap), -cap)
-        score += clipped / cap * weight
-        direction = "우호" if value >= 0 else "비우호"
-        reasons.append(f"{label} {direction}({value:+.2f}%)")
-
-    def log_trend_slope(window: int) -> float | None:
-        if len(close) < window:
-            return None
-        segment = np.log(close.tail(window).astype(float).values)
-        x = np.arange(len(segment), dtype=float)
-        slope = float(np.polyfit(x, segment, 1)[0])
-        return slope * 100.0
-
-    def gap_vs_ma(window: int) -> float | None:
-        if len(close) < window:
-            return None
-        ma = float(close.tail(window).mean())
-        if ma == 0:
-            return None
-        last = float(close.iloc[-1])
-        return (last / ma - 1) * 100
-
-    add(ret["5d"], 7.0, 18.0, "5일 추세")
-    add(ret["20d"], 12.0, 25.0, "20일 추세")
-    add(ret["60d"], 10.0, 35.0, "60일 추세")
-    add(log_trend_slope(10), 6.0, 1.2, "10일 기울기")
-    add(log_trend_slope(20), 6.0, 1.0, "20일 기울기")
-    add(log_trend_slope(60), 4.0, 0.8, "60일 기울기")
-
-    gap5 = gap_vs_ma(5)
-    gap20 = gap_vs_ma(20)
-    gap60 = gap_vs_ma(60)
-    if gap5 is not None:
-        score += max(min(gap5, 6.0), -6.0) / 6.0 * 3.0
-        reasons.append(f"5일선 대비 {gap5:+.2f}%")
-    if gap20 is not None:
-        score += max(min(gap20, 10.0), -10.0) / 10.0 * 5.0
-        reasons.append(f"20일선 대비 {gap20:+.2f}%")
-    if gap60 is not None:
-        score += max(min(gap60, 15.0), -15.0) / 15.0 * 4.0
-        reasons.append(f"60일선 대비 {gap60:+.2f}%")
-
-    if volume is not None and len(volume) >= 20:
-        avg20 = float(volume.tail(20).mean())
-        latest_vol = float(volume.iloc[-1])
-        if avg20 > 0:
-            vol_ratio = latest_vol / avg20
-            if vol_ratio >= 1.5:
-                score += 5.0
-                reasons.append(f"거래량 강세({vol_ratio:.2f}x)")
-            elif vol_ratio >= 1.1:
-                score += 2.5
-                reasons.append(f"거래량 확인({vol_ratio:.2f}x)")
-            elif vol_ratio <= 0.75:
-                score -= 3.0
-                reasons.append(f"거래량 둔화({vol_ratio:.2f}x)")
-
-    if kospi_close is not None and len(close) >= 21 and len(kospi_close) >= 21:
-        rs = relative_strength(close, kospi_close)
-        if rs is not None:
-            rs_clipped = max(min(rs, 15.0), -15.0)
-            score += rs_clipped / 15.0 * 12.0
-            reasons.append(f"코스피 대비 상대강도 {rs:+.2f}%p")
-
-    if len(close) >= 20:
-        recent = close.tail(20)
-        vol_ann = float(recent.pct_change().dropna().std() * math.sqrt(252) * 100)
-        if vol_ann >= 90:
-            score -= 6.0
-            reasons.append(f"변동성 과열({vol_ann:.1f}%)")
-        elif vol_ann <= 30:
-            score += 2.5
-            reasons.append(f"변동성 안정({vol_ann:.1f}%)")
-
-        if len(recent) >= 2 and float(recent.iloc[-2]) != 0:
-            one_day = float(recent.iloc[-1] / recent.iloc[-2] - 1) * 100
-            if one_day > 6:
-                score -= 2.0
-                reasons.append(f"단기 과열({one_day:+.2f}%)")
-            elif one_day < -6:
-                score -= 1.0
-                reasons.append(f"급락 충격({one_day:+.2f}%)")
-
-    score += market_score * 2.5
-    if market_score > 0.75:
-        reasons.append("시장 레짐 우호")
-    elif market_score < -0.75:
-        reasons.append("시장 레짐 비우호")
-
-    if gap20 is not None and gap20 > 8 and ret["5d"] is not None and ret["5d"] < 0:
-        score -= 4.0
-        reasons.append("상승 후 되돌림 경계")
-
-    if ret["20d"] is not None and ret["60d"] is not None and ret["20d"] > 0 and ret["60d"] > 0:
-        score += 2.0
-        reasons.append("추세 일관성 양호")
-    elif ret["20d"] is not None and ret["60d"] is not None and ret["20d"] < 0 and ret["60d"] < 0:
-        score -= 2.5
-        reasons.append("하락 추세 일관성")
-
-    score = float(max(0.0, min(100.0, score)))
-    if score >= 68:
-        label = "매수"
-    elif score <= 32:
-        label = "매도"
-    else:
-        label = "중립"
-    return label, score, reasons[:8]
-
-
-def coach_message(market_score: float, signal: str, stock_score: float, volatility_flag: str) -> str:
-    if stock_score >= 68 and market_score >= 0:
-        return "승률 우위 구간입니다. 추격보다 분할 진입이 유리하고, 비중은 1차/2차로 나눠서 관리하세요."
-    if stock_score >= 68 and market_score < 0:
-        return "종목은 강하지만 시장이 받쳐주지 않습니다. 작은 비중의 분할만 허용하고 손절 규칙을 더 엄격하게 두세요."
-    if stock_score <= 32:
-        return "우위가 약합니다. 오늘은 현금 비중을 지키고, 반등 확인 전까지는 기다리는 쪽이 승률이 높습니다."
-    if volatility_flag == "high":
-        return "변동성이 과합니다. 맞추려 하지 말고, 진입은 늦추고 비중은 줄이세요."
-    if market_score <= -1.0:
-        return "시장 레짐이 좋지 않습니다. 보수적으로 보고, 새로운 포지션은 최소화하세요."
-    return "시그널은 중립입니다. 방향성 확인 전까지는 관망이 가장 좋은 포지션입니다."
-
-
-def summarize_stock(code: str, name: str, history: pd.DataFrame, kospi_close: pd.Series | None, market_score: float) -> tuple[str, float, list[str], str]:
-    if history.empty:
-        return "중립", 50.0, ["데이터가 부족합니다"], "low"
-    _, _, _, close_c, volume_c = find_ohlcv_columns(history)
-    close = history[close_c].dropna()
-    vol = history[volume_c].dropna() if volume_c in history.columns else pd.Series(dtype=float)
-    signal, score, reasons = stock_signal(code, history, market_score, kospi_close)
-    volatility_flag = "low"
-    if len(close) >= 20:
-        ret20 = close.pct_change().dropna().tail(20)
-        vol_ann = float(ret20.std() * math.sqrt(252) * 100) if not ret20.empty else 0.0
-        volatility_flag = "high" if vol_ann >= 80 else "low"
-        reasons.append(f"연환산 변동성 {vol_ann:.1f}%")
-    if len(vol) >= 20:
-        ratio = float(vol.iloc[-1] / vol.tail(20).mean())
-        reasons.append(f"거래량 비중 {ratio:.2f}x")
-    return signal, score, reasons, volatility_flag
-
 
 def main() -> None:
     st.markdown('<div class="hero-title">Stance Stock Strategy</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="hero-subtitle">코스피, 코스닥, 환율, 금리, 관심 종목을 한 화면에서 보고 오늘의 매수/중립/매도 판단과 행동 원칙까지 바로 확인합니다.</div>',
+        '<div class="hero-subtitle">한국 시장, 포트폴리오 리스크, 종목 검토 흐름을 하나로 연결한 투자 의사결정 대시보드입니다.</div>',
         unsafe_allow_html=True,
     )
 
     if fdr is None:
-        st.error(
-            "FinanceDataReader를 불러오지 못했습니다. 로컬 환경에 `FinanceDataReader`와 `streamlit`를 설치한 뒤 실행해주세요."
-        )
+        st.error("FinanceDataReader를 불러올 수 없습니다. `pip install -r requirements.txt`를 확인하세요.")
         st.stop()
 
     if "refresh_token" not in st.session_state:
@@ -6742,12 +6440,12 @@ def main() -> None:
         st.session_state.discovery_scan_requested = False
 
     with st.sidebar:
-        st.header("종목 입력")
-        st.caption("쉼표 또는 줄바꿈으로 종목코드를 입력하세요. 최대 15개까지 지원합니다.")
+        st.header("관심종목 입력")
+        st.caption("종목코드를 줄바꿈 또는 쉼표로 입력하세요. 최대 15개까지 표시합니다.")
         if "pending_sidebar_message" in st.session_state:
             st.success(st.session_state.pending_sidebar_message)
             del st.session_state.pending_sidebar_message
-        code_text = st.text_area("종목 코드", key="sidebar_codes_text", height=220)
+        code_text = st.text_area("종목코드", key="sidebar_codes_text", height=220)
 
         st.header("포트폴리오")
         st.session_state.portfolio_total_assets = st.number_input(
@@ -6768,13 +6466,13 @@ def main() -> None:
             "보유종목 CSV",
             value=str(st.session_state.get("portfolio_holdings_text", "")),
             height=120,
-            placeholder="code,qty,avg_price,sector\n005930,10,75000,반도체",
+            placeholder="code,qty,avg_price,sector\n005930,10,75000,반도체\n034020,5,25000,에너지",
         )
 
-        with st.expander("리스크/비용 설정"):
+        with st.expander("리스크 기본값"):
             RISK_DEFAULTS["risk_per_trade_pct"] = st.slider("1회 거래 최대 손실(%)", 0.05, 2.0, float(RISK_DEFAULTS["risk_per_trade_pct"] * 100), 0.05) / 100
             RISK_DEFAULTS["max_position_pct"] = st.slider("단일 종목 최대 비중(%)", 1.0, 30.0, float(RISK_DEFAULTS["max_position_pct"] * 100), 0.5) / 100
-            RISK_DEFAULTS["trading_cost_pct"] = st.slider("왕복 거래비용/세금(%)", 0.0, 2.0, float(RISK_DEFAULTS["trading_cost_pct"]), 0.05)
+            RISK_DEFAULTS["trading_cost_pct"] = st.slider("거래 비용/세금(%)", 0.0, 2.0, float(RISK_DEFAULTS["trading_cost_pct"]), 0.05)
             RISK_DEFAULTS["slippage_pct"] = st.slider("슬리피지(%)", 0.0, 2.0, float(RISK_DEFAULTS["slippage_pct"]), 0.05)
 
         refresh_clicked = st.button("데이터 새로고침", use_container_width=True)
@@ -6784,7 +6482,7 @@ def main() -> None:
 
     codes, invalid_tokens = parse_code_input(code_text)
     if len(codes) > 15:
-        st.warning("종목은 최대 15개까지만 보여줍니다. 앞의 15개만 사용합니다.")
+        st.warning("관심종목은 최대 15개까지 표시합니다. 앞의 15개만 사용합니다.")
         codes = codes[:15]
 
     listing = load_listing_cache(st.session_state.refresh_token)
@@ -6801,11 +6499,11 @@ def main() -> None:
             invalid_codes.append(code)
 
     if invalid_tokens:
-        st.warning(f"형식이 맞지 않는 입력은 제외했습니다: {', '.join(invalid_tokens)}")
+        st.warning(f"인식하지 못한 입력은 제외했습니다: {', '.join(invalid_tokens)}")
     if invalid_codes:
-        st.warning(f"KRX에서 찾지 못한 코드가 있습니다: {', '.join(invalid_codes)}")
+        st.warning(f"KRX 목록에서 찾지 못한 코드는 제외했습니다: {', '.join(invalid_codes)}")
     if not valid_rows:
-        st.info("사이드바에 유효한 종목코드를 입력하면 차트가 표시됩니다.")
+        st.info("유효한 종목코드가 없어 기본 관심종목을 표시합니다.")
         valid_rows = [{"code": code, "name": STOCK_UNIVERSE_NAME_HINTS.get(code, code)} for code in DEFAULT_CODES[:5]]
 
     watch_codes = tuple(row["code"] for row in valid_rows)

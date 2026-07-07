@@ -5,8 +5,8 @@ from typing import Any
 
 
 GRADE_LABELS = {
-    "STRONG_REVIEW": "강력 검토 후보",
-    "BUY_REVIEW": "매수 검토 후보",
+    "STRONG_REVIEW": "강한 검토 후보",
+    "BUY_REVIEW": "비중 보강 검토",
     "WATCHLIST": "관찰 후보",
     "NEUTRAL": "중립",
     "CAUTION": "주의",
@@ -19,6 +19,13 @@ MARKET_LABELS = {
     "KONEX": "코넥스",
     "ETF": "ETF",
     "ETN": "ETN",
+}
+
+RISK_LABELS = {
+    "low": "낮음",
+    "medium": "주의",
+    "high": "높음",
+    "severe": "심각",
 }
 
 
@@ -46,14 +53,11 @@ def formatKoreanLargeNumber(value: Any) -> str:
     sign = "-" if number < 0 else ""
     number = abs(number)
     if number >= 1_0000_0000_0000:
-        jo = number / 1_0000_0000_0000
-        return f"{sign}{jo:,.1f}조"
+        return f"{sign}{number / 1_0000_0000_0000:,.1f}조"
     if number >= 1_0000_0000:
-        eok = number / 1_0000_0000
-        return f"{sign}{eok:,.1f}억"
+        return f"{sign}{number / 1_0000_0000:,.1f}억"
     if number >= 1_0000:
-        man = number / 1_0000
-        return f"{sign}{man:,.1f}만"
+        return f"{sign}{number / 1_0000:,.1f}만"
     return f"{sign}{number:,.0f}"
 
 
@@ -79,6 +83,10 @@ def formatPercent(value: Any, signed: bool = False, digits: int = 1) -> str:
     return f"{prefix}{number * 100:.{digits}f}%"
 
 
+def formatSignedPercent(value: Any, digits: int = 1) -> str:
+    return formatPercent(value, signed=True, digits=digits)
+
+
 def formatScore(value: Any) -> str:
     number = _finite(value)
     return "-" if number is None else f"{number:.0f}"
@@ -102,14 +110,7 @@ def formatConfidence(value: Any) -> str:
 
 
 def formatRiskBadge(risk: Any) -> str:
-    text = str(risk or "")
-    mapping = {
-        "low": "낮음",
-        "medium": "주의",
-        "high": "높음",
-        "severe": "심각",
-    }
-    return mapping.get(text.lower(), safeDisplay(risk))
+    return RISK_LABELS.get(str(risk or "").lower(), safeDisplay(risk))
 
 
 def formatDate(value: Any) -> str:
@@ -126,14 +127,14 @@ def fearGreedBand(score: Any) -> dict[str, str]:
             "label": "N/A",
             "tone": "muted",
             "color": "#94a3b8",
-            "advice": "데이터가 부족합니다. 시장 심리 지표를 확인할 수 있을 때까지 보수적으로 해석합니다.",
+            "advice": "데이터가 부족합니다. 시장 심리 지표가 확인될 때까지 보수적으로 해석합니다.",
         }
     if number <= 24:
         return {
             "label": "극단 공포",
             "tone": "danger",
             "color": "#ef4444",
-            "advice": "공포가 매우 큰 구간입니다. 분할 접근과 손실 제한을 우선합니다.",
+            "advice": "공포가 매우 큰 구간입니다. 분할 접근과 손실 제한이 우선입니다.",
         }
     if number <= 44:
         return {
@@ -147,14 +148,14 @@ def fearGreedBand(score: Any) -> dict[str, str]:
             "label": "중립",
             "tone": "muted",
             "color": "#94a3b8",
-            "advice": "중립 구간입니다. 방향성 확인 전까지 비중을 크게 늘리지 않습니다.",
+            "advice": "중립 구간입니다. 방향이 확인되기 전까지 비중을 크게 늘리지 않습니다.",
         }
     if number <= 74:
         return {
             "label": "탐욕",
             "tone": "positive",
             "color": "#a3e635",
-            "advice": "탐욕 우위 구간입니다. 신규 진입은 신중히 검토하고 보유 종목의 리스크를 점검합니다.",
+            "advice": "탐욕 우위 구간입니다. 신규 진입은 신중히 검토하고 보유 종목 리스크를 점검합니다.",
         }
     return {
         "label": "극단 탐욕",

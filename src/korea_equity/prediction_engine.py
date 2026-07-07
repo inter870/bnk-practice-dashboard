@@ -87,7 +87,7 @@ def explainPredictionDrivers(factor_scores: dict[str, float], risk_flags: list[s
     labels = {
         "momentum": "모멘텀",
         "quality": "퀄리티",
-        "value": "밸류에이션",
+        "value": "밸류",
         "earnings_revision": "실적 추정",
         "supply_demand": "수급",
         "event_catalyst": "이벤트",

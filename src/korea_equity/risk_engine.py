@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .config import DEFAULT_MAX_SINGLE_STOCK_WEIGHT, DEFAULT_MAX_SECTOR_WEIGHT
+from .config import DEFAULT_MAX_SECTOR_WEIGHT, DEFAULT_MAX_SINGLE_STOCK_WEIGHT
 from .factor_engine import (
     calculateATR,
     calculateLiquidityScore,
@@ -64,12 +64,7 @@ def calculateRiskAdjustedPositionSize(
     max_single = safeNumber(constraints.get("max_single_stock_weight"), DEFAULT_MAX_SINGLE_STOCK_WEIGHT) or DEFAULT_MAX_SINGLE_STOCK_WEIGHT
     liquidity = safeNumber(risk_metrics.get("liquidity_score"), 50) or 50.0
     risk_score = 100 - (safeNumber(risk_metrics.get("risk_penalty"), 0) or 0)
-    suggested = calculateSuggestedWeight(
-        score,
-        risk_score,
-        liquidity,
-        {"max_single_stock_weight": max_single},
-    )
+    suggested = calculateSuggestedWeight(score, risk_score, liquidity, {"max_single_stock_weight": max_single})
     cap_reason = "점수·리스크 기반"
     if market_regime == "panic":
         suggested *= 0.35
