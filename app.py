@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import html
+import importlib
 import io
 import json
 from datetime import datetime, timedelta
@@ -114,6 +115,48 @@ from src.korea_equity.interaction import (
     safe_external_url,
     serialize_query_context,
 )
+from src.institutional import (
+    PortfolioRiskThresholds,
+    build_data_trust_source_panel,
+    build_dart_disclosure_catalyst_panel,
+    build_forward_alpha_ranking_panel,
+    build_fundamental_quality_panel,
+    build_krw_rates_fx_dashboard,
+    build_market_regime_macro_radar,
+    build_portfolio_optimizer_alert_center,
+    build_portfolio_risk_cockpit,
+    build_smart_money_flow_short_pressure_panel,
+    build_valuation_relative_cheapness_panel,
+    dart_disclosure_catalyst_panel_html,
+    data_trust_source_panel_html,
+    forward_alpha_ranking_panel_html,
+    fundamental_quality_panel_html,
+    krw_rates_fx_dashboard_html,
+    market_regime_macro_radar_html,
+    portfolio_optimizer_alert_center_html,
+    portfolio_risk_cockpit_html,
+    smart_money_flow_short_pressure_panel_html,
+    valuation_relative_cheapness_panel_html,
+)
+from src.ui.korea_os_theme import inject_korea_os_theme
+from src.ui.korean_market_colors import getChartSeriesColor, getKoreanMarketColorToken
+import src.institutional.ui as institutional_ui_module
+import src.ui.korea_os_theme as korea_os_theme_module
+
+
+institutional_ui_module = importlib.reload(institutional_ui_module)
+korea_os_theme_module = importlib.reload(korea_os_theme_module)
+dart_disclosure_catalyst_panel_html = institutional_ui_module.dart_disclosure_catalyst_panel_html
+data_trust_source_panel_html = institutional_ui_module.data_trust_source_panel_html
+forward_alpha_ranking_panel_html = institutional_ui_module.forward_alpha_ranking_panel_html
+fundamental_quality_panel_html = institutional_ui_module.fundamental_quality_panel_html
+krw_rates_fx_dashboard_html = institutional_ui_module.krw_rates_fx_dashboard_html
+market_regime_macro_radar_html = institutional_ui_module.market_regime_macro_radar_html
+portfolio_optimizer_alert_center_html = institutional_ui_module.portfolio_optimizer_alert_center_html
+portfolio_risk_cockpit_html = institutional_ui_module.portfolio_risk_cockpit_html
+smart_money_flow_short_pressure_panel_html = institutional_ui_module.smart_money_flow_short_pressure_panel_html
+valuation_relative_cheapness_panel_html = institutional_ui_module.valuation_relative_cheapness_panel_html
+inject_korea_os_theme = korea_os_theme_module.inject_korea_os_theme
 
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -242,6 +285,31 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
+    :root {
+        --stance-bg: #05070D;
+        --stance-card-bg: #0B1020;
+        --stance-card-bg-soft: #111827;
+        --stance-surface-elevated: #172033;
+        --stance-text-primary: #F8FAFC;
+        --stance-text-secondary: #E5E7EB;
+        --stance-text-tertiary: #CBD5E1;
+        --stance-text-muted: #94A3B8;
+        --stance-text-disabled: #64748B;
+        --stance-border-subtle: rgba(148, 163, 184, 0.18);
+        --stance-border-default: rgba(148, 163, 184, 0.28);
+        --stance-focus-ring: #38BDF8;
+        --stance-positive: #4ADE80;
+        --stance-negative: #FB7185;
+        --stance-warning: #FCD34D;
+        --stance-info: #38BDF8;
+        --stance-neutral: #CBD5E1;
+        --kos-market-up: #FF4D4F;
+        --kos-market-down: #3B82F6;
+        --kos-market-flat: #CBD5E1;
+        --kos-market-up-soft-bg: rgba(255, 77, 79, 0.12);
+        --kos-market-down-soft-bg: rgba(59, 130, 246, 0.12);
+        --kos-risk-critical: #F97316;
+    }
     html,
     body {
         width: 100%;
@@ -256,10 +324,11 @@ CUSTOM_CSS = """
     }
     .stApp {
         background:
-            radial-gradient(circle at top left, rgba(255, 77, 77, 0.08), transparent 28%),
-            radial-gradient(circle at top right, rgba(65, 105, 225, 0.08), transparent 24%),
-            linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+            radial-gradient(circle at top left, rgba(139, 92, 246, 0.14), transparent 28%),
+            radial-gradient(circle at top right, rgba(56, 189, 248, 0.09), transparent 24%),
+            linear-gradient(180deg, var(--stance-bg) 0%, var(--stance-card-bg) 100%);
         font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", "NanumGothic", sans-serif;
+        color: var(--stance-text-primary);
         width: 100%;
         max-width: 100vw;
         overflow-x: hidden;
@@ -295,35 +364,74 @@ CUSTOM_CSS = """
     svg {
         max-width: 100%;
     }
+    .stApp input::placeholder,
+    .stApp textarea::placeholder,
+    .stApp input::-webkit-input-placeholder,
+    .stApp textarea::-webkit-input-placeholder {
+        color: var(--stance-text-muted) !important;
+        opacity: 1 !important;
+    }
+    .stApp a,
+    .stApp a:visited,
+    .portfolio-intelligence-shell a,
+    .portfolio-intelligence-shell a:visited,
+    .pi-card a,
+    .pi-card a:visited,
+    .korea-card a,
+    .korea-card a:visited,
+    .korea-os-card a,
+    .korea-os-card a:visited {
+        color: var(--stance-info) !important;
+        text-decoration-color: rgba(56, 189, 248, 0.55) !important;
+    }
+    .stApp a:hover,
+    .portfolio-intelligence-shell a:hover,
+    .pi-card a:hover,
+    .korea-card a:hover,
+    .korea-os-card a:hover {
+        color: #BAE6FD !important;
+        text-decoration-color: #BAE6FD !important;
+    }
+    .stApp [role="radiogroup"] label *,
+    .stApp [role="radiogroup"] p,
+    .stApp [data-testid="stRadio"] p,
+    .stApp [data-testid="stRadio"] span {
+        color: var(--stance-text-tertiary) !important;
+    }
+    .stApp [role="radiogroup"] label:has(input:checked) *,
+    .stApp [role="radiogroup"] label:has(input:checked) p,
+    .stApp [role="radiogroup"] label:has(input:checked) span {
+        color: var(--stance-text-primary) !important;
+    }
     .hero-title {
         font-size: 2rem;
         font-weight: 800;
         letter-spacing: -0.03em;
         margin-bottom: 0.2rem;
-        color: #111827;
+        color: var(--stance-text-primary);
     }
     .hero-subtitle {
-        color: #475569;
+        color: var(--stance-text-tertiary);
         margin-bottom: 1rem;
         font-size: 0.96rem;
     }
     .metric-card {
         border-radius: 18px;
         padding: 16px 16px 14px 16px;
-        background: rgba(255, 255, 255, 0.84);
-        border: 1px solid rgba(148, 163, 184, 0.28);
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+        border: 1px solid var(--stance-border-default);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 38px rgba(2, 6, 23, 0.26);
         min-height: 120px;
     }
     .metric-label {
         font-size: 0.84rem;
-        color: #334155;
+        color: var(--stance-text-secondary);
         font-weight: 700;
         margin-bottom: 6px;
     }
     .metric-name {
         font-size: 1.04rem;
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-weight: 800;
         line-height: 1.25;
         margin-bottom: 6px;
@@ -331,45 +439,45 @@ CUSTOM_CSS = """
     .metric-value {
         font-size: 1.55rem;
         font-weight: 900;
-        color: #0f172a;
+        color: var(--stance-text-primary);
         line-height: 1.1;
     }
     .metric-change-pos {
-        color: #dc2626;
+        color: var(--kos-market-up);
         font-weight: 700;
         margin-top: 8px;
     }
     .metric-change-neg {
-        color: #2563eb;
+        color: var(--kos-market-down);
         font-weight: 700;
         margin-top: 8px;
     }
     .metric-change-flat {
-        color: #64748b;
+        color: var(--stance-neutral);
         font-weight: 700;
         margin-top: 8px;
     }
     .section-title {
         margin-top: 0.8rem;
         margin-bottom: 0.4rem;
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 1.15rem;
         font-weight: 800;
     }
     .small-note {
-        color: #64748b;
+        color: var(--stance-text-tertiary);
         font-size: 0.85rem;
     }
     .signal-box {
         border-radius: 18px;
-        background: rgba(255, 255, 255, 0.9);
-        border: 1px solid rgba(148, 163, 184, 0.3);
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+        border: 1px solid var(--stance-border-default);
         padding: 14px 16px;
-        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 38px rgba(2, 6, 23, 0.26);
     }
-    .signal-buy { color: #dc2626; font-weight: 900; }
-    .signal-neutral { color: #64748b; font-weight: 900; }
-    .signal-sell { color: #2563eb; font-weight: 900; }
+    .signal-buy { color: var(--kos-market-up); font-weight: 900; }
+    .signal-neutral { color: var(--stance-neutral); font-weight: 900; }
+    .signal-sell { color: var(--kos-market-down); font-weight: 900; }
     .insight-grid {
         display: grid;
         grid-template-columns: 1.05fr 1.45fr 1.05fr;
@@ -379,9 +487,9 @@ CUSTOM_CSS = """
     .insight-panel {
         border-radius: 8px;
         padding: 14px 14px 12px 14px;
-        background: rgba(255, 255, 255, 0.94);
-        border: 1px solid rgba(100, 116, 139, 0.24);
-        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+        border: 1px solid var(--stance-border-default);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 38px rgba(2, 6, 23, 0.26);
         min-height: 258px;
     }
     .insight-head {
@@ -392,13 +500,13 @@ CUSTOM_CSS = """
         margin-bottom: 10px;
     }
     .insight-title {
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 0.98rem;
         font-weight: 900;
         line-height: 1.2;
     }
     .insight-kicker {
-        color: #64748b;
+        color: var(--stance-text-muted);
         font-size: 0.76rem;
         font-weight: 800;
         text-transform: uppercase;
@@ -418,13 +526,13 @@ CUSTOM_CSS = """
         margin-bottom: 9px;
     }
     .pressure-score strong {
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 2.25rem;
         font-weight: 950;
         line-height: 1;
     }
     .pressure-score span {
-        color: #64748b;
+        color: var(--stance-text-tertiary);
         font-size: 0.85rem;
         font-weight: 800;
     }
@@ -441,8 +549,8 @@ CUSTOM_CSS = """
         width: 3px;
         height: 17px;
         border-radius: 999px;
-        background: #111827;
-        box-shadow: 0 0 0 2px #fff;
+        background: var(--stance-text-primary);
+        box-shadow: 0 0 0 2px var(--stance-card-bg);
     }
     .signal-row,
     .rank-row,
@@ -463,18 +571,18 @@ CUSTOM_CSS = """
         grid-template-columns: minmax(86px, 1fr) auto;
     }
     .row-label {
-        color: #334155;
+        color: var(--stance-text-secondary);
         font-size: 0.82rem;
         font-weight: 850;
         white-space: nowrap;
     }
     .row-sub {
-        color: #64748b;
+        color: var(--stance-text-muted);
         font-size: 0.74rem;
         font-weight: 700;
     }
     .row-value {
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 0.8rem;
         font-weight: 900;
         text-align: right;
@@ -483,7 +591,7 @@ CUSTOM_CSS = """
     .mini-track {
         height: 7px;
         border-radius: 999px;
-        background: #e2e8f0;
+        background: rgba(148, 163, 184, 0.24);
         overflow: hidden;
     }
     .mini-fill {
@@ -491,7 +599,7 @@ CUSTOM_CSS = """
         border-radius: 999px;
     }
     .rank-header {
-        color: #64748b;
+        color: var(--stance-text-muted);
         font-size: 0.75rem;
         font-weight: 900;
         text-align: right;
@@ -509,12 +617,12 @@ CUSTOM_CSS = """
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 0.86rem;
         font-weight: 900;
     }
     .rank-name span {
-        color: #64748b;
+        color: var(--stance-text-muted);
         font-size: 0.74rem;
         font-weight: 800;
     }
@@ -522,9 +630,9 @@ CUSTOM_CSS = """
         margin-top: 10px;
         padding: 10px;
         border-radius: 8px;
-        background: #f8fafc;
-        border: 1px solid rgba(148, 163, 184, 0.22);
-        color: #334155;
+        background: rgba(23, 32, 51, 0.82);
+        border: 1px solid var(--stance-border-subtle);
+        color: var(--stance-text-secondary);
         font-size: 0.84rem;
         font-weight: 750;
         line-height: 1.45;
@@ -532,10 +640,10 @@ CUSTOM_CSS = """
     .quality-banner {
         border-radius: 8px;
         padding: 12px 14px;
-        background: #ffffff;
-        border: 1px solid rgba(100, 116, 139, 0.24);
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+        border: 1px solid var(--stance-border-default);
         margin: 0.6rem 0 1rem 0;
-        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.05);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 38px rgba(2, 6, 23, 0.26);
     }
     .quality-top {
         display: flex;
@@ -547,7 +655,7 @@ CUSTOM_CSS = """
     .quality-score {
         font-size: 1.45rem;
         font-weight: 950;
-        color: #0f172a;
+        color: var(--stance-text-primary);
     }
     .quality-status {
         border-radius: 999px;
@@ -558,7 +666,7 @@ CUSTOM_CSS = """
         white-space: nowrap;
     }
     .quality-warnings {
-        color: #475569;
+        color: var(--stance-text-tertiary);
         font-size: 0.82rem;
         font-weight: 750;
         line-height: 1.45;
@@ -572,17 +680,17 @@ CUSTOM_CSS = """
     .action-panel {
         border-radius: 8px;
         padding: 12px 14px;
-        background: rgba(255, 255, 255, 0.96);
-        border: 1px solid rgba(100, 116, 139, 0.22);
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+        border: 1px solid var(--stance-border-default);
     }
     .action-panel strong {
         display: block;
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 0.95rem;
         margin-bottom: 6px;
     }
     .action-panel div {
-        color: #334155;
+        color: var(--stance-text-secondary);
         font-size: 0.84rem;
         font-weight: 760;
         line-height: 1.5;
@@ -606,11 +714,11 @@ CUSTOM_CSS = """
         text-align: left;
     }
     .command-table th {
-        color: #64748b;
+        color: var(--stance-text-muted);
         font-weight: 900;
     }
     .command-table td {
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-weight: 760;
     }
     @media (max-width: 1100px) {
@@ -625,17 +733,17 @@ CUSTOM_CSS = """
         display: inline-block;
         padding: 4px 10px;
         border-radius: 999px;
-        background: #e2e8f0;
-        color: #334155;
+        background: rgba(148, 163, 184, 0.16);
+        color: var(--stance-text-tertiary);
         font-size: 0.78rem;
         margin-right: 6px;
         margin-bottom: 6px;
     }
     .decision-report {
         border-radius: 8px;
-        background: #ffffff;
-        border: 1px solid rgba(15, 23, 42, 0.12);
-        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.07);
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+        border: 1px solid var(--stance-border-default);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 38px rgba(2, 6, 23, 0.26);
         padding: 15px 16px;
         margin: 0.7rem 0 1rem 0;
     }
@@ -649,13 +757,13 @@ CUSTOM_CSS = """
         margin-bottom: 10px;
     }
     .decision-title {
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 1.04rem;
         font-weight: 950;
         line-height: 1.25;
     }
     .decision-conclusion {
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 1.14rem;
         font-weight: 950;
         line-height: 1.45;
@@ -669,28 +777,28 @@ CUSTOM_CSS = """
     }
     .decision-tile {
         border-radius: 8px;
-        background: #f8fafc;
-        border: 1px solid rgba(148, 163, 184, 0.22);
+        background: rgba(23, 32, 51, 0.82);
+        border: 1px solid var(--stance-border-subtle);
         padding: 10px;
         min-height: 76px;
     }
     .decision-tile small {
         display: block;
-        color: #64748b;
+        color: var(--stance-text-muted);
         font-size: 0.74rem;
         font-weight: 850;
         margin-bottom: 5px;
     }
     .decision-tile strong {
         display: block;
-        color: #0f172a;
+        color: var(--stance-text-primary);
         font-size: 0.92rem;
         font-weight: 950;
         line-height: 1.35;
     }
     .decision-tile span {
         display: block;
-        color: #475569;
+        color: var(--stance-text-tertiary);
         font-size: 0.78rem;
         font-weight: 760;
         line-height: 1.35;
@@ -1019,6 +1127,30 @@ CUSTOM_CSS = """
         border-color: rgba(74, 222, 128, 0.34);
         color: #bbf7d0;
     }
+    .pi-badge.market-up,
+    .pi-badge.market-badge-up {
+        background: var(--kos-market-up-soft-bg);
+        border-color: rgba(255, 77, 79, 0.40);
+        color: #ffe4e6;
+    }
+    .pi-badge.market-down,
+    .pi-badge.market-badge-down {
+        background: var(--kos-market-down-soft-bg);
+        border-color: rgba(59, 130, 246, 0.40);
+        color: #dbeafe;
+    }
+    .pi-badge.market-flat,
+    .pi-badge.market-neutral,
+    .pi-badge.market-badge-flat {
+        background: rgba(203, 213, 225, 0.10);
+        border-color: rgba(203, 213, 225, 0.28);
+        color: #cbd5e1;
+    }
+    .pi-badge.risk-critical {
+        background: rgba(249, 115, 22, 0.14);
+        border-color: rgba(249, 115, 22, 0.40);
+        color: #ffedd5;
+    }
     .pi-badge.info {
         background: rgba(56, 189, 248, 0.14);
         border-color: rgba(56, 189, 248, 0.35);
@@ -1230,11 +1362,11 @@ CUSTOM_CSS = """
     }
     .pi-tone-good .pi-metric-value,
     .pi-value-good {
-        color: #86efac;
+        color: var(--kos-market-up);
     }
     .pi-tone-risk .pi-metric-value,
     .pi-value-risk {
-        color: #fca5a5;
+        color: var(--kos-market-down);
     }
     .pi-tone-warn .pi-metric-value,
     .pi-value-warn {
@@ -1262,7 +1394,7 @@ CUSTOM_CSS = """
         line-height: 1.35;
     }
     .pi-benchmark-strip strong {
-        color: #86efac;
+        color: var(--kos-market-up);
         font-size: 1.12rem;
         font-weight: 950;
         font-variant-numeric: tabular-nums;
@@ -2037,11 +2169,11 @@ CUSTOM_CSS = """
         font-size: 0.72rem;
         font-weight: 950;
     }
-    .heatmap-strong { background: rgba(34, 197, 94, 0.86); }
-    .heatmap-good { background: rgba(56, 189, 248, 0.78); }
+    .heatmap-strong { background: rgba(255, 77, 79, 0.90); }
+    .heatmap-good { background: rgba(255, 122, 122, 0.82); }
     .heatmap-neutral { background: rgba(139, 92, 246, 0.72); }
     .heatmap-weak { background: rgba(245, 158, 11, 0.88); }
-    .heatmap-risk { background: rgba(239, 68, 68, 0.88); }
+    .heatmap-risk { background: rgba(59, 130, 246, 0.88); }
     .heatmap-empty { background: rgba(100, 116, 139, 0.82); }
     .fear-greed-panel {
         border-radius: 14px;
@@ -2142,6 +2274,7 @@ CUSTOM_CSS = """
 
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 st.markdown(KOREA_DASHBOARD_VISIBILITY_CSS, unsafe_allow_html=True)
+inject_korea_os_theme()
 
 
 DEFAULT_CODES = [
@@ -3157,7 +3290,7 @@ def stock_signal(
     kospi_close: pd.Series | None,
 ) -> tuple[str, float, list[str]]:
     if history is None or history.empty:
-        return "Neutral", 50.0, ["price data unavailable"]
+        return "Neutral", 50.0, ["가격 데이터 없음"]
     _, _, _, close_col, volume_col = find_ohlcv_columns(history)
     close = history[close_col].dropna()
     volume = history[volume_col].dropna() if volume_col in history.columns else pd.Series(dtype=float)
@@ -3549,7 +3682,7 @@ def build_briefing_user_prompt(
     try:
         kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
     except Exception:
-        kill_state = {"active": False, "reason": "ledger unavailable", "sample_size": 0, "hit_rate": None}
+        kill_state = {"active": False, "reason": "신호 원장 사용 불가", "sample_size": 0, "hit_rate": None}
 
     structured_context = {
         "ref_date": ref_date,
@@ -4233,7 +4366,7 @@ def classify_disclosure(report_name: str) -> tuple[str, str, int]:
             return "위험", "#f97316", severity
     for pattern, severity in positive_patterns:
         if pattern in text:
-            return "긍정", "#22c55e", severity
+            return "긍정", getChartSeriesColor("up"), severity
     return "중립", "#94a3b8", 0
 
 
@@ -4517,7 +4650,7 @@ def render_executive_decision_report(
     try:
         kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
     except Exception:
-        kill_state = {"active": False, "reason": "ledger unavailable", "sample_size": 0}
+        kill_state = {"active": False, "reason": "신호 원장 사용 불가", "sample_size": 0}
 
     stance, conclusion, stance_color = _portfolio_stance(regime, leader_action, exec_quality)
     if kill_state.get("active"):
@@ -5022,7 +5155,7 @@ def render_risk_plan(active_code: str | None, code_to_name: dict[str, str], refr
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">Risk / Reward</div>
+                    <div class="insight-kicker">손익비</div>
                     <div class="insight-title">손익비와 포지션 기준</div>
                 </div>
                 <div class="insight-badge" style="background:{plan["color"]};">{html.escape(plan["label"])}</div>
@@ -5036,17 +5169,17 @@ def render_risk_plan(active_code: str | None, code_to_name: dict[str, str], refr
 
 
 def _format_bps(value: float | None) -> str:
-    return "unavailable" if value is None else f"{value:.1f}bp"
+    return "데이터 없음" if value is None else f"{value:.1f}bp"
 
 
 def _format_krw(value: float | None) -> str:
-    return "unavailable" if value is None else f"{value:,.0f}원"
+    return "데이터 없음" if value is None else f"{value:,.0f}원"
 
 
 def render_execution_card(exec_plan: Any, expected_edge: float | None = None) -> None:
     warning_lines: list[str] = []
     if getattr(exec_plan, "unavailable_fields", None):
-        warning_lines.append("unavailable: " + ", ".join(exec_plan.unavailable_fields[:4]))
+        warning_lines.append("데이터 없음: " + ", ".join(exec_plan.unavailable_fields[:4]))
     if getattr(exec_plan, "warnings", None):
         warning_lines.extend(exec_plan.warnings[:3])
     if should_block_for_execution(exec_plan, expected_edge):
@@ -5077,7 +5210,7 @@ def render_execution_card(exec_plan: Any, expected_edge: float | None = None) ->
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">Execution Quality</div>
+                    <div class="insight-kicker">실행 품질</div>
                     <div class="insight-title">실행 품질</div>
                 </div>
                 <div class="insight-badge" style="background:{color};">{quality:.0f}점</div>
@@ -5103,7 +5236,7 @@ def render_exit_plan_card(exit_plan: Any) -> None:
             ("트레일링", format_price(getattr(exit_plan, "trailing_stop", None))),
             ("1차 목표", format_price(getattr(exit_plan, "first_take_profit", None))),
             ("2차 목표", format_price(getattr(exit_plan, "second_take_profit", None))),
-            ("시간 손절", str(getattr(exit_plan, "time_stop_date", "unavailable"))),
+            ("시간 손절", str(getattr(exit_plan, "time_stop_date", "데이터 없음"))),
             ("잔여 러너", f"{getattr(exit_plan, 'runner_position_pct', 0) * 100:.0f}%"),
             ("신뢰도", f"{getattr(exit_plan, 'exit_confidence', 0):.0f}/100"),
         ]
@@ -5118,7 +5251,7 @@ def render_exit_plan_card(exit_plan: Any) -> None:
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">Dynamic Exit Plan</div>
+                    <div class="insight-kicker">동적 청산 계획</div>
                     <div class="insight-title">청산 계획</div>
                 </div>
                 <div class="insight-badge" style="background:{color};">{html.escape(status)}</div>
@@ -5332,11 +5465,11 @@ def plot_portfolio_value_chart(points: list[Any], benchmark_points: list[Any]) -
         return fig
     dates = [_portfolio_point_date(point) for point in points]
     values = [_portfolio_point_value(point) for point in points]
-    ax.plot(dates, values, color="#a78bfa", linewidth=2.2, label="Portfolio")
+    ax.plot(dates, values, color="#a78bfa", linewidth=2.2, label="포트폴리오")
     if benchmark_points:
         bench_dates = [_portfolio_point_date(point) for point in benchmark_points]
         bench_values = [_portfolio_point_value(point) for point in benchmark_points]
-        ax.plot(bench_dates, bench_values, color="#38bdf8", linewidth=1.6, label="Benchmark", alpha=0.85)
+        ax.plot(bench_dates, bench_values, color="#38bdf8", linewidth=1.6, label="벤치마크", alpha=0.85)
     ax.set_title("포트폴리오 vs 벤치마크", color="#f8fafc", loc="left", fontsize=12, weight="bold")
     ax.legend(facecolor="#111827", edgecolor="#334155", labelcolor="#e5e7eb")
     fig.autofmt_xdate(rotation=0)
@@ -5373,12 +5506,12 @@ def portfolio_health_card_html(score: int, label: str, reasons: list[str], color
     return f"""
         <div class="pi-card">
             <div class="pi-card-header">
-                <strong>Portfolio Health</strong>
+                <strong>포트폴리오 건강도</strong>
                 <span class="pi-badge {label_tone}">{html.escape(label)}</span>
             </div>
             <div class="pi-card-body">
                 <div class="pi-health-score"><strong>{score}</strong><span>/100</span></div>
-                <div class="pi-progress" aria-label="Portfolio Health {score}점">
+                <div class="pi-progress" aria-label="포트폴리오 건강도 {score}점">
                     <div class="pi-progress-fill" style="width:{score}%; background:linear-gradient(90deg, {html.escape(color)}, #f97316);"></div>
                 </div>
                 <div class="pi-reason-list">{reason_html or "<div class='pi-reason'><span class='pi-dot'></span><span>포트폴리오 방어 우선</span></div>"}</div>
@@ -5502,7 +5635,7 @@ def risk_return_panel_html(metrics: dict[str, Any], benchmark_excess: Any = None
     return f"""
         <div class="pi-card pi-risk-card">
             <div class="pi-card-header">
-                <strong>Risk & Return</strong>
+                <strong>리스크·수익</strong>
                 <span class="pi-badge info">검토 지표</span>
             </div>
             <div class="pi-card-body">
@@ -5567,7 +5700,7 @@ def insight_engine_card_html(insights: list[dict[str, str]], metrics: dict[str, 
     return f"""
         <div class="pi-card pi-insight-card">
             <div class="pi-card-header">
-                <strong>Insight Engine</strong>
+                <strong>인사이트 엔진</strong>
                 <span class="pi-badge info">규칙 기반</span>
             </div>
             <div class="pi-card-body">
@@ -5630,7 +5763,7 @@ def concentration_card_html(holdings: list[Any], concentration: dict[str, Any]) 
             <div class="pi-card-body">
                 <div class="pi-holding-list">{''.join(rows) if rows else '<div class="thesis">보유종목 데이터가 없습니다.</div>'}</div>
                 <div class="pi-concentration-footer">
-                    Top weight {html.escape(top_weight)} · HHI {html.escape(hhi)}<br/>
+                    상위 비중 {html.escape(top_weight)} · HHI {html.escape(hhi)}<br/>
                     상위 보유 비중과 HHI 기준 집중도 점검 필요
                 </div>
             </div>
@@ -5706,6 +5839,169 @@ def render_watchlist_signals_card(signals: list[dict[str, Any]]) -> None:
     st.html(watchlist_signals_card_html(signals))
 
 
+def render_portfolio_risk_cockpit_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
+    parsed_rows, parse_errors = parse_portfolio_text(holdings_text)
+    using_mock = not parsed_rows
+    holdings = getHoldings(parsed_rows, snapshot, code_to_name)
+    total_assets = None if using_mock else safe_float(st.session_state.get("portfolio_total_assets"))
+    cash = None if using_mock else safe_float(st.session_state.get("portfolio_cash"))
+    thresholds = PortfolioRiskThresholds(
+        single_stock_weight=float(RISK_DEFAULTS.get("max_position_pct", 0.10) or 0.10),
+        sector_weight=float(RISK_DEFAULTS.get("max_sector_pct", 0.30) or 0.30),
+        cash_min_weight=0.03,
+    )
+    state = build_portfolio_risk_cockpit(
+        holdings,
+        total_assets=total_assets,
+        cash=cash,
+        snapshots=snapshot,
+        price_series=getPortfolioSnapshots(),
+        thresholds=thresholds,
+        allow_mock=True,
+        source_label="Mock portfolio data" if using_mock else "Sidebar portfolio input",
+    )
+    if parse_errors:
+        st.warning("포트폴리오 리스크 관제실 입력 확인: " + " / ".join(parse_errors[:2]))
+    st.html(portfolio_risk_cockpit_html(state))
+
+
+def render_data_trust_source_panel_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_DATA_TRUST", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+
+    holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
+    parsed_rows, _ = parse_portfolio_text(holdings_text)
+    using_mock = not parsed_rows
+    api_key_status = {
+        "DART_API_KEY": bool(DART_API_KEY and DART_API_KEY != "YOUR_API_KEY"),
+        "OPENDART_API_KEY": bool(DART_API_KEY and DART_API_KEY != "YOUR_API_KEY"),
+        "ECOS_API_KEY": bool(ECOS_API_KEY and ECOS_API_KEY != "YOUR_ECOS_KEY"),
+        "BOK_ECOS_API_KEY": bool(ECOS_API_KEY and ECOS_API_KEY != "YOUR_ECOS_KEY"),
+        "OPENAI_API_KEY": bool(OPENAI_API_KEY),
+        "KIS_APP_KEY": bool(KIS_APP_KEY),
+        "KIS_APP_SECRET": bool(KIS_APP_SECRET),
+        "PUBLIC_DATA_API_KEY": bool(config_value("PUBLIC_DATA_API_KEY", "")),
+        "KOSIS_API_KEY": bool(config_value("KOSIS_API_KEY", "")),
+        "FRED_API_KEY": bool(config_value("FRED_API_KEY", "")),
+    }
+    state = build_data_trust_source_panel(
+        snapshots=snapshot,
+        portfolio_holding_count=len(parsed_rows),
+        using_mock_portfolio=using_mock,
+        api_key_status=api_key_status,
+    )
+    st.html(data_trust_source_panel_html(state))
+
+
+def render_market_regime_macro_radar_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_MARKET_REGIME_RADAR", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=True)
+    st.html(market_regime_macro_radar_html(state))
+
+
+def render_krw_rates_fx_dashboard_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_KRW_RATES_FX", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
+    parsed_rows, _ = parse_portfolio_text(holdings_text)
+    holdings = getHoldings(parsed_rows, snapshot, code_to_name)
+    state = build_krw_rates_fx_dashboard(snapshots=snapshot, holdings=holdings, allow_mock=True)
+    st.html(krw_rates_fx_dashboard_html(state))
+
+
+def render_valuation_relative_cheapness_panel_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_VALUATION_PANEL", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_valuation_relative_cheapness_panel(allow_mock=True)
+    st.html(valuation_relative_cheapness_panel_html(state))
+
+
+def render_fundamental_quality_panel_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_FUNDAMENTAL_QUALITY", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_fundamental_quality_panel(allow_mock=True)
+    st.html(fundamental_quality_panel_html(state))
+
+
+def render_dart_disclosure_catalyst_panel_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_DART_CATALYSTS", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_dart_disclosure_catalyst_panel(allow_mock=True)
+    st.html(dart_disclosure_catalyst_panel_html(state))
+
+
+def render_smart_money_flow_short_pressure_panel_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_FLOW_SHORT_PRESSURE", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_smart_money_flow_short_pressure_panel(allow_mock=True)
+    st.html(smart_money_flow_short_pressure_panel_html(state))
+
+
+def render_forward_alpha_ranking_panel_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_FORWARD_ALPHA_RANKING", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_forward_alpha_ranking_panel(allow_mock=True)
+    st.html(forward_alpha_ranking_panel_html(state))
+
+
+def render_portfolio_optimizer_alert_center_section(
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+    refresh_token: int,
+) -> None:
+    flag_value = os.getenv("STANCE_ENABLE_PORTFOLIO_OPTIMIZER", "1").strip().lower()
+    if flag_value in {"0", "false", "no", "off"}:
+        return
+    state = build_portfolio_optimizer_alert_center(allow_mock=True)
+    st.html(portfolio_optimizer_alert_center_html(state))
+
+
 def render_portfolio_intelligence_section(
     snapshot: dict[str, Snapshot],
     code_to_name: dict[str, str],
@@ -5760,15 +6056,15 @@ def render_portfolio_intelligence_section(
         parse_notice = f"<span class='pi-badge warn'>{html.escape('입력 확인: ' + ' / '.join(parse_errors[:2]))}</span>"
     st.html(
         f"""
-        <section class="portfolio-intelligence-shell" aria-label="Portfolio Intelligence">
+        <section class="portfolio-intelligence-shell" aria-label="포트폴리오 인텔리전스">
             <div class="portfolio-intelligence-title">
                 <div>
-                    <strong>Portfolio Intelligence</strong>
+                    <strong>포트폴리오 인텔리전스</strong>
                     <span>위험, 배분 이탈, 리밸런싱 후보를 한 화면에서 점검합니다.</span>
                 </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
                     {parse_notice}
-                    <span class="pi-badge info">Decision Support</span>
+                    <span class="pi-badge info">의사결정 보조</span>
                 </div>
             </div>
             <div class="portfolio-intelligence-grid">
@@ -5790,10 +6086,10 @@ def render_portfolio_intelligence_section(
     }
     st.html(
         f"""
-        <section class="portfolio-intelligence-shell" aria-label="Portfolio Intelligence Details">
+        <section class="portfolio-intelligence-shell" aria-label="포트폴리오 인텔리전스 상세">
             <div class="portfolio-intelligence-title">
                 <div>
-                    <strong>Risk, Signals & Insight</strong>
+                    <strong>리스크·신호·인사이트</strong>
                     <span>수익·위험·집중도·보유 신호를 검토 후보 관점으로 정리합니다.</span>
                 </div>
                 <span class="pi-badge warn">리스크 확인</span>
@@ -5817,12 +6113,12 @@ def render_portfolio_intelligence_section(
 
 def _korea_grade_color(grade: str) -> str:
     return {
-        "STRONG_REVIEW": "#22c55e",
-        "BUY_REVIEW": "#a78bfa",
+        "STRONG_REVIEW": getChartSeriesColor("up"),
+        "BUY_REVIEW": getChartSeriesColor("up"),
         "WATCHLIST": "#38bdf8",
         "NEUTRAL": "#94a3b8",
-        "CAUTION": "#f59e0b",
-        "EXCLUDE": "#ef4444",
+        "CAUTION": getChartSeriesColor("warning", context="risk"),
+        "EXCLUDE": getChartSeriesColor("critical", context="risk"),
     }.get(str(grade), "#94a3b8")
 
 
@@ -5958,7 +6254,7 @@ def build_live_korea_market_status(snapshot: dict[str, Snapshot]) -> KoreaMarket
         regime=regime_map.get(regime_output.regime, "neutral"),
         regime_score=regime_output.score,
         reason=reasons[:6],
-        source=", ".join(source_bits) if source_bits else "snapshot unavailable",
+        source=", ".join(source_bits) if source_bits else "스냅샷 없음",
         updated_at=updated_at,
         is_live=is_live,
     )
@@ -5975,7 +6271,7 @@ def _format_market_return(value: float | None) -> str:
     number = safe_float(value)
     if number is None:
         return ""
-    color = "#22c55e" if number >= 0 else "#60a5fa"
+    color = getKoreanMarketColorToken(number)
     return f"<span style='color:{color}; font-weight:900;'>({number * 100:+.2f}%)</span>"
 
 
@@ -6055,12 +6351,21 @@ def _korea_evidence(text: str) -> _HtmlCell:
     return _HtmlCell(f'<span class="korea-evidence">{html.escape(str(text or "-"))}</span>')
 
 
+def _korea_stock_cell(name: Any, code: Any = "", meta: Any = "") -> _HtmlCell:
+    meta_bits = [str(bit) for bit in [code, meta] if str(bit or "").strip()]
+    meta_text = " · ".join(meta_bits)
+    meta_html = f"<span>{html.escape(meta_text)}</span>" if meta_text else ""
+    return _HtmlCell(
+        f'<span class="korea-stock-cell"><strong>{html.escape(str(name or "-"))}</strong>{meta_html}</span>'
+    )
+
+
 def _korea_factor_cell(value: Any) -> _HtmlCell:
     bucket = korea_heatmap_bucket(value)
     number = safe_float(value)
     score = "-" if number is None else f"{number:.0f}"
     return _HtmlCell(
-        f'<span class="korea-heat {html.escape(bucket["class"])}"><strong>{score}</strong><small>{html.escape(bucket["label"])}</small></span>'
+        f'<span class="korea-heat korea-os-heatmap-cell {html.escape(bucket["class"])}"><strong>{score}</strong><small>{html.escape(bucket["label"])}</small></span>'
     )
 
 
@@ -6079,7 +6384,7 @@ def _korea_percent_text(value: Any, signed: bool = False, digits: int = 1) -> st
 def _korea_module_title(title: str, subtitle: str = "", meta: str = "") -> None:
     st.markdown(
         f"""
-        <div class="korea-module-title">
+        <div class="korea-module-title korea-os-section-header">
             <div>
                 <strong>{html.escape(title)}</strong>
                 {f'<span>{html.escape(subtitle)}</span>' if subtitle else ''}
@@ -6098,10 +6403,10 @@ def _korea_empty_html(message: str, detail: str = "") -> str:
 
 def _korea_metric_html(label: str, value: str, tone: str = "") -> str:
     tone_style = {
-        "good": "color:#22c55e;",
+        "good": f"color:{getChartSeriesColor('up')};",
         "info": "color:#38bdf8;",
         "warn": "color:#f59e0b;",
-        "risk": "color:#f87171;",
+        "risk": f"color:{getChartSeriesColor('down')};",
     }.get(tone, "")
     return f"""
     <div class="korea-metric">
@@ -6220,8 +6525,8 @@ def _korea_table_html(rows: list[dict[str, Any]], columns: list[str] | None = No
                 cells.append(f'<td class="{css}">{html.escape(str(value))}</td>')
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
     return f"""
-    <div class="korea-table-wrap">
-        <table class="korea-table"><thead><tr>{header}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>
+    <div class="korea-table-wrap korea-os-table-wrap">
+        <table class="korea-table korea-os-table"><thead><tr>{header}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>
     </div>
     """
 
@@ -6521,7 +6826,7 @@ def render_korea_recommendation_table(scores: list[Any]) -> None:
         latest = _korea_latest_price(getattr(score, "code", ""))
         grade = str(getattr(score, "recommendation_grade", ""))
         evidence = " / ".join(list(getattr(score, "positive_reasons", []) or [])[:2] + list(getattr(score, "negative_reasons", []) or [])[:1])
-        rows.append({"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))} · {html.escape(korea_format_market_label(getattr(score, 'market', '')))}</span>"), "검토상태": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(grade)), "총점": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "현재가": korea_format_krw(latest), "3M 기대": korea_format_percent(getattr(score, "expected_return_3m", None), signed=True), "하방위험": korea_format_percent(getattr(score, "downside_risk", None)), "검토비중": korea_format_percent(getattr(score, "suggested_weight", None)), "근거": _korea_evidence(evidence)})
+        rows.append({"종목": _korea_stock_cell(getattr(score, "name", ""), getattr(score, "code", ""), korea_format_market_label(getattr(score, "market", ""))), "검토상태": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(grade)), "총점": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "현재가": korea_format_krw(latest), "3M 기대": korea_format_percent(getattr(score, "expected_return_3m", None), signed=True), "하방위험": korea_format_percent(getattr(score, "downside_risk", None)), "검토비중": korea_format_percent(getattr(score, "suggested_weight", None)), "근거": _korea_evidence(evidence)})
     st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
@@ -6559,7 +6864,7 @@ def render_korea_factor_heatmap(scores: list[Any]) -> None:
                     render_linked_factor_button(label, factor_key, value, "factorHeatmap", code, name, key_scope="heat")
     rows = []
     for score in scores[:10]:
-        row = {"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>")}
+        row = {"종목": _korea_stock_cell(getattr(score, "name", ""), getattr(score, "code", ""))}
         for label, _, value in _korea_factor_items(score):
             row[label] = _korea_factor_cell(value)
         rows.append(row)
@@ -6580,7 +6885,7 @@ def render_korea_supply_demand_radar(scores: list[Any]) -> None:
         total = foreign + institution + pension
         signal = "외국인·기관 합산 순매수" if total > 0 else "수급 약화"
         rows.append({
-            "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(code)}</span>"),
+            "종목": _korea_stock_cell(getattr(score, "name", ""), code),
             "외국인 20D": _korea_flow_cell(foreign),
             "기관 20D": _korea_flow_cell(institution),
             "연기금 20D": _korea_flow_cell(pension),
@@ -6631,7 +6936,7 @@ def render_korea_value_up_radar(candidates: list[Any]) -> None:
     rows = []
     for score in candidates[:8]:
         factors = _korea_factor_dict(score)
-        rows.append({"종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"), "밸류업": _korea_factor_cell(factors.get("밸류업")), "밸류": _korea_factor_cell(factors.get("밸류")), "퀄리티": _korea_factor_cell(factors.get("퀄리티")), "검토비중": korea_format_percent(getattr(score, "suggested_weight", None)), "근거": _korea_evidence(" / ".join(getattr(score, "positive_reasons", [])[:2]))})
+        rows.append({"종목": _korea_stock_cell(getattr(score, "name", ""), getattr(score, "code", "")), "밸류업": _korea_factor_cell(factors.get("밸류업")), "밸류": _korea_factor_cell(factors.get("밸류")), "퀄리티": _korea_factor_cell(factors.get("퀄리티")), "검토비중": korea_format_percent(getattr(score, "suggested_weight", None)), "근거": _korea_evidence(" / ".join(getattr(score, "positive_reasons", [])[:2]))})
     st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}</div>')
 
 
@@ -6661,7 +6966,7 @@ def render_korea_portfolio_action_queue(scores: list[Any]) -> None:
     rows = []
     for score in scores[:10]:
         grade = getattr(score, "recommendation_grade", "NEUTRAL")
-        rows.append({"검토": _korea_badge(_korea_action_label(str(grade)), _korea_grade_badge_class(str(grade))), "종목": _HtmlCell(f"{html.escape(getattr(score, 'name', ''))}<span class='muted'>{html.escape(getattr(score, 'code', ''))}</span>"), "등급": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(str(grade))), "점수": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "최대비중": korea_format_percent(getattr(score, "max_suggested_weight", None)), "리스크": _korea_badge(", ".join(getattr(score, "risk_flags", [])[:2]) or "중요 플래그 없음", "good")})
+        rows.append({"검토": _korea_badge(_korea_action_label(str(grade)), _korea_grade_badge_class(str(grade))), "종목": _korea_stock_cell(getattr(score, "name", ""), getattr(score, "code", "")), "등급": _korea_badge(korea_format_grade(grade), _korea_grade_badge_class(str(grade))), "점수": korea_format_score(getattr(score, "total_score", None)), "신뢰도": korea_format_confidence(getattr(score, "confidence", None)), "최대비중": korea_format_percent(getattr(score, "max_suggested_weight", None)), "리스크": _korea_badge(", ".join(getattr(score, "risk_flags", [])[:2]) or "중요 플래그 없음", "good")})
     st.html(f'<div class="korea-card compact">{_korea_table_html(rows)}<div class="korea-safety-callout">Mock mode: 공식 실시간 주문 기능은 제공하지 않습니다. 실제 매매 전 원천 데이터와 공시를 반드시 재확인하세요.</div></div>')
 
 
@@ -7034,7 +7339,7 @@ def render_korea_investment_os_section(os_data: dict[str, Any]) -> None:
 
 def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int) -> None:
     init_korea_interaction_state()
-    st.markdown('<div class="portfolio-shell korea-shell">', unsafe_allow_html=True)
+    st.markdown('<div class="portfolio-shell korea-shell korea-os-theme">', unsafe_allow_html=True)
     st.markdown(
         """
         <div class="portfolio-head"><div><div class="portfolio-eyebrow">Korea Alpha Engine</div><div class="portfolio-title">한국 주식 초과수익 후보와 리스크를 한 번에 보는 알고리즘 보드</div><div class="portfolio-subtitle">주문 실행이 아닌 검토 후보 보드입니다. 모든 판단은 점수, 신뢰도, 기대수익 범위, 하방위험, 근거, 데이터 기준일과 함께 표시합니다.</div></div></div>
@@ -7047,6 +7352,18 @@ def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int
         market_filter = st.multiselect("시장", ["KOSPI", "KOSDAQ", "ETF"], default=["KOSPI", "KOSDAQ"], key=f"korea_market_filter_{refresh_token}")
         min_score = st.slider("최소 점수", 0, 100, 0, 5, key=f"korea_min_score_{refresh_token}")
         grade_filter = st.multiselect("등급", ["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], default=["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], format_func=korea_format_grade, key=f"korea_grade_filter_{refresh_token}")
+    grade_summary = "전체" if len(grade_filter) == 6 else ", ".join(korea_format_grade(item) for item in grade_filter)
+    market_summary = ", ".join(market_filter) if market_filter else "선택 없음"
+    st.html(
+        f"""
+        <div class="korea-filter-summary" aria-label="한국 알파 필터 선택 요약">
+            <strong>한국 알파 필터</strong>
+            <span class="korea-filter-chip">시장: {html.escape(market_summary)}</span>
+            <span class="korea-filter-chip">최소 점수: {int(min_score)} / 100</span>
+            <span class="korea-filter-chip">등급: {html.escape(grade_summary)}</span>
+        </div>
+        """
+    )
     live_market_status = build_live_korea_market_status(snapshot)
     data = getKoreaDashboardData({"markets": market_filter, "limit": 12, "market_status": live_market_status})
     all_scores = [score for score in data.get("scores", []) if getattr(score, "total_score", 0) >= min_score and getattr(score, "recommendation_grade", "") in grade_filter]
@@ -7115,7 +7432,7 @@ def render_portfolio_section(
     refresh_token: int,
     last_refresh: str,
 ) -> None:
-    st.markdown('<div class="section-title">Portfolio Command Center</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">포트폴리오 관제센터</div>', unsafe_allow_html=True)
     total_assets = safe_float(st.session_state.get("portfolio_total_assets")) or 100_000_000.0
     cash = safe_float(st.session_state.get("portfolio_cash")) or 0.0
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
@@ -7225,12 +7542,22 @@ def render_portfolio_section(
 
 
 def render_settings_section() -> None:
-    st.markdown('<div class="section-title">Settings</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">설정</div>', unsafe_allow_html=True)
     st.write("핵심 리스크 기본값과 API 연결 상태를 확인합니다. 실제 주문 기능은 제공하지 않습니다.")
     kis_status = "활성" if kis_enabled() else "비활성 - KIS_APP_KEY/KIS_APP_SECRET 필요"
     st.info(f"KIS 공식 현재가 사용 상태: {kis_status}")
+    setting_labels = {
+        "risk_per_trade_pct": "1회 거래 최대 손실률",
+        "max_position_pct": "단일 종목 최대 비중",
+        "max_sector_pct": "섹터 최대 비중",
+        "min_raw_rr": "최소 기본 손익비",
+        "min_quality_adjusted_rr": "최소 품질조정 손익비",
+        "extreme_risk_off_min_rr": "극단 위험회피 최소 손익비",
+        "trading_cost_pct": "거래 비용·세금",
+        "slippage_pct": "슬리피지",
+    }
     settings_rows = "".join(
-        f"<tr><td>{html.escape(str(key))}</td><td>{html.escape(str(value))}</td></tr>"
+        f"<tr><td>{html.escape(setting_labels.get(str(key), str(key)))}</td><td>{html.escape(str(value))}</td></tr>"
         for key, value in RISK_DEFAULTS.items()
     )
     st.html(
@@ -7269,10 +7596,10 @@ def _candidate_display_rows(candidates: list[dict[str, Any]]) -> list[dict[str, 
                 "유형": item.get("category"),
                 "발굴점수": item.get("discovery_score"),
                 "주도력": item.get("leadership_score"),
-                "기대값": "unavailable" if item.get("expected_edge") is None else f"{item.get('expected_edge'):+.2f}%",
-                "손익비": "unavailable" if item.get("risk_reward_ratio") is None else f"{item.get('risk_reward_ratio'):.2f}x",
-                "트리거": "unavailable" if item.get("trigger_price") is None else f"{item.get('trigger_price'):,.0f}",
-                "손절": "unavailable" if item.get("stop_price") is None else f"{item.get('stop_price'):,.0f}",
+                "기대값": "데이터 없음" if item.get("expected_edge") is None else f"{item.get('expected_edge'):+.2f}%",
+                "손익비": "데이터 없음" if item.get("risk_reward_ratio") is None else f"{item.get('risk_reward_ratio'):.2f}x",
+                "트리거": "데이터 없음" if item.get("trigger_price") is None else f"{item.get('trigger_price'):,.0f}",
+                "손절": "데이터 없음" if item.get("stop_price") is None else f"{item.get('stop_price'):,.0f}",
                 "최대비중": f"{float(item.get('max_position_pct') or 0) * 100:.1f}%",
                 "신뢰도": item.get("confidence"),
             }
@@ -7283,7 +7610,7 @@ def _candidate_display_rows(candidates: list[dict[str, Any]]) -> list[dict[str, 
 def render_alpha_discovery_summary(refresh_token: int) -> None:
     requested = bool(st.session_state.get("discovery_scan_requested", False))
     if not requested:
-        st.info("Alpha Discovery 스캔을 실행하면 Dashboard 요약에 상위 후보가 표시됩니다.")
+        st.info("알파 후보 탐색을 실행하면 대시보드 요약에 상위 후보가 표시됩니다.")
         return
     max_symbols = int(st.session_state.get("discovery_max_symbols", 220))
     candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
@@ -7296,7 +7623,7 @@ def render_alpha_discovery_summary(refresh_token: int) -> None:
         <div class="insight-panel">
             <div class="insight-head">
                 <div>
-                    <div class="insight-kicker">Alpha Discovery</div>
+                    <div class="insight-kicker">알파 후보 탐색</div>
                     <div class="insight-title">{html.escape(str(top.get('name')))} ({html.escape(str(top.get('code')))}): {html.escape(str(top.get('category')))}</div>
                 </div>
                 <div class="insight-badge" style="background:#0f766e;">{float(top.get('discovery_score') or 0):.0f}점</div>
@@ -7358,7 +7685,7 @@ def render_dashboard_extension_summary(
         try:
             kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
         except Exception as exc:
-            kill_state = {"active": False, "reason": f"ledger unavailable: {exc}", "sample_size": 0, "hit_rate": None}
+            kill_state = {"active": False, "reason": f"신호 원장 사용 불가: {exc}", "sample_size": 0, "hit_rate": None}
         state_text = "활성" if kill_state.get("active") else "정상"
         tone = "warn" if kill_state.get("active") else "good"
         st.html(
@@ -7373,7 +7700,7 @@ def render_dashboard_extension_summary(
 
 
 def render_alpha_discovery_section(refresh_token: int) -> None:
-    st.markdown('<div class="section-title">Alpha Discovery</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">알파 후보 탐색</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="small-note">KOSPI/KOSDAQ 후보를 스캔해 상대강도, 신고가 근접, 거래대금, 눌림목, 생존주 조건을 검토합니다. 결과는 매수 지시가 아니라 검토 후보입니다.</div>',
         unsafe_allow_html=True,
@@ -7422,7 +7749,7 @@ def render_alpha_discovery_section(refresh_token: int) -> None:
 
     with st.expander("상위 후보 근거"):
         for item in candidates[:10]:
-            positives = " / ".join(item.get("positive_reasons") or ["긍정 근거 unavailable"])
+            positives = " / ".join(item.get("positive_reasons") or ["긍정 근거 없음"])
             negatives = " / ".join(item.get("negative_reasons") or ["부정 근거 없음"])
             st.markdown(f"**{item.get('name')} ({item.get('code')})** · {item.get('category')} · {item.get('discovery_score'):.0f}점")
             st.caption(f"긍정: {positives}")
@@ -7435,13 +7762,13 @@ def render_signal_outcome_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    st.markdown('<div class="section-title">Signal Outcome Ledger</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">신호 성과 기록</div>', unsafe_allow_html=True)
     init_db(SIGNAL_LEDGER_DB)
     kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
     metric_cols = st.columns(4)
-    metric_cols[0].metric("Kill-switch", "활성" if kill_state.get("active") else "정상")
+    metric_cols[0].metric("킬스위치", "활성" if kill_state.get("active") else "정상")
     metric_cols[1].metric("검증 표본", str(kill_state.get("sample_size")))
-    metric_cols[2].metric("Hit rate", "N/A" if kill_state.get("hit_rate") is None else f"{kill_state.get('hit_rate') * 100:.1f}%")
+    metric_cols[2].metric("적중률", "N/A" if kill_state.get("hit_rate") is None else f"{kill_state.get('hit_rate') * 100:.1f}%")
     metric_cols[3].metric("상태", str(kill_state.get("reason")))
 
     market_score, _ = market_regime(snapshot)
@@ -7516,7 +7843,7 @@ def render_stocks_section(
     refresh_token: int,
     last_refresh: str,
 ) -> None:
-    st.markdown('<div class="section-title">Stocks</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">종목</div>', unsafe_allow_html=True)
     market_score, _ = market_regime(snapshot)
     regime_output = build_market_regime_output(snapshot)
     kospi_snap = snapshot.get("KOSPI")
@@ -7616,6 +7943,16 @@ def render_dashboard_section(
     market_score, market_notes = market_regime(snapshot)
     regime_output = build_market_regime_output(snapshot)
     render_action_console(regime_output)
+    render_portfolio_risk_cockpit_section(snapshot, code_to_name, refresh_token)
+    render_data_trust_source_panel_section(snapshot, code_to_name, refresh_token)
+    render_market_regime_macro_radar_section(snapshot, code_to_name, refresh_token)
+    render_krw_rates_fx_dashboard_section(snapshot, code_to_name, refresh_token)
+    render_valuation_relative_cheapness_panel_section(snapshot, code_to_name, refresh_token)
+    render_fundamental_quality_panel_section(snapshot, code_to_name, refresh_token)
+    render_dart_disclosure_catalyst_panel_section(snapshot, code_to_name, refresh_token)
+    render_smart_money_flow_short_pressure_panel_section(snapshot, code_to_name, refresh_token)
+    render_forward_alpha_ranking_panel_section(snapshot, code_to_name, refresh_token)
+    render_portfolio_optimizer_alert_center_section(snapshot, code_to_name, refresh_token)
     render_korea_context_bar("dashboard")
     render_explanation_panel(key_scope="dashboard")
     kospi_snap = snapshot.get("KOSPI")
@@ -7936,24 +8273,24 @@ def render_disclosure_section(
         """
         <style>
             .disclosure-card {
-                background: rgba(255, 255, 255, 0.96);
-                border: 1px solid rgba(148, 163, 184, 0.28);
+                background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(11, 16, 32, 0.94));
+                border: 1px solid var(--stance-border-default, rgba(148, 163, 184, 0.28));
                 border-radius: 16px;
                 padding: 14px 16px;
                 margin-bottom: 12px;
-                color: #0f172a !important;
-                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+                color: var(--stance-text-primary, #F8FAFC) !important;
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 16px 38px rgba(2, 6, 23, 0.26);
             }
             .disclosure-card * { color: inherit; }
-            .disclosure-title { font-weight: 800; font-size: 1.02rem; margin: 2px 0 6px 0; color: #0f172a !important; }
-            .disclosure-company { font-weight: 800; color: #111827 !important; }
-            .disclosure-meta { color: #475569 !important; font-size: 0.86rem; margin-top: 4px; }
-            .disclosure-card a { color: #1d4ed8 !important; font-weight: 700; text-decoration: none; }
+            .disclosure-title { font-weight: 800; font-size: 1.02rem; margin: 2px 0 6px 0; color: var(--stance-text-primary, #F8FAFC) !important; }
+            .disclosure-company { font-weight: 800; color: var(--stance-text-primary, #F8FAFC) !important; }
+            .disclosure-meta { color: var(--stance-text-tertiary, #CBD5E1) !important; font-size: 0.86rem; margin-top: 4px; }
+            .disclosure-card a { color: var(--stance-info, #38BDF8) !important; font-weight: 700; text-decoration: none; }
             .disclosure-card a:hover { text-decoration: underline; }
             .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:0.78rem; font-weight:800; margin-right:6px; }
-            .badge-good { background:rgba(220,38,38,0.12); color:#b91c1c; }
-            .badge-mid { background:rgba(100,116,139,0.12); color:#475569; }
-            .badge-bad { background:rgba(37,99,235,0.12); color:#1d4ed8; }
+            .badge-good { background:rgba(74,222,128,0.16); color:#BBF7D0; border:1px solid rgba(74,222,128,0.28); }
+            .badge-mid { background:rgba(148,163,184,0.16); color:#E5E7EB; border:1px solid rgba(148,163,184,0.24); }
+            .badge-bad { background:rgba(251,113,133,0.16); color:#FFE4E6; border:1px solid rgba(251,113,133,0.30); }
         </style>
         """,
         unsafe_allow_html=True,
@@ -8080,7 +8417,7 @@ def main() -> None:
     ref_date_candidates = [snap.asof for snap in snapshot.values() if snap.asof is not None]
     ref_date = max(ref_date_candidates).strftime("%Y-%m-%d") if ref_date_candidates else datetime.now().strftime("%Y-%m-%d")
     last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    tabs = st.tabs(["Dashboard", "Portfolio", "Stocks", "Alpha Discovery", "Disclosures", "Macro", "Briefing", "Signal Outcome", "Settings"])
+    tabs = st.tabs(["대시보드", "포트폴리오", "종목", "알파 후보 탐색", "공시", "매크로", "브리핑", "신호 성과", "설정"])
     with tabs[0]:
         render_dashboard_section(snapshot, valid_rows, code_to_name, ref_date, last_refresh, st.session_state.refresh_token)
     with tabs[1]:

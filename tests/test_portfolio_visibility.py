@@ -53,14 +53,14 @@ class PortfolioVisibilityTests(unittest.TestCase):
         concentration_start = APP_TEXT.index("def concentration_card_html")
         concentration_text = APP_TEXT[concentration_start : concentration_start + 2800]
         self.assertIn("pi-holding-row", concentration_text)
-        self.assertIn("Top weight", concentration_text)
+        self.assertIn("상위 비중", concentration_text)
         self.assertIn("HHI", concentration_text)
         self.assertNotIn("signal-row", concentration_text)
 
         watchlist_start = APP_TEXT.index("def watchlist_signals_card_html")
         watchlist_text = APP_TEXT[watchlist_start : watchlist_start + 2200]
         self.assertIn("pi-signal-row", watchlist_text)
-        self.assertIn("뚜렷한 우위 신호 없음", APP_TEXT)
+        self.assertIn("신호 없음", APP_TEXT)
         self.assertNotIn("rank-row", watchlist_text)
 
         insight_start = APP_TEXT.index("def insight_engine_card_html")
@@ -72,7 +72,7 @@ class PortfolioVisibilityTests(unittest.TestCase):
     def test_detail_section_renders_cards_before_charts(self) -> None:
         section_start = APP_TEXT.index("def render_portfolio_intelligence_section")
         section_text = APP_TEXT[section_start : section_start + 7000]
-        self.assertIn("Risk, Signals & Insight", section_text)
+        self.assertIn("리스크·신호·인사이트", section_text)
         self.assertIn("risk_return_panel_html(portfolio_metrics, relative_return)", section_text)
         self.assertIn("concentration_card_html(holdings, concentration)", section_text)
         self.assertIn("insight_engine_card_html(insights, portfolio_metrics)", section_text)

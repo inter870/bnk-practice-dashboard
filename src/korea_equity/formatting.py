@@ -205,14 +205,14 @@ def heatmapBucket(score: Any) -> dict[str, str]:
     if number is None:
         return {"label": "N/A", "class": "heatmap-empty", "color": "#94a3b8"}
     if number >= 75:
-        return {"label": "강함", "class": "heatmap-strong", "color": "#22c55e"}
+        return {"label": "강함", "class": "heatmap-strong", "color": "#FF4D4F"}
     if number >= 60:
-        return {"label": "양호", "class": "heatmap-good", "color": "#38bdf8"}
+        return {"label": "양호", "class": "heatmap-good", "color": "#FF7A7A"}
     if number >= 45:
         return {"label": "보통", "class": "heatmap-neutral", "color": "#a78bfa"}
     if number >= 30:
         return {"label": "약함", "class": "heatmap-weak", "color": "#f59e0b"}
-    return {"label": "취약", "class": "heatmap-risk", "color": "#ef4444"}
+    return {"label": "취약", "class": "heatmap-risk", "color": "#3B82F6"}
 
 
 def candleSummaryText(close: Any, return_5d: Any, return_20d: Any, volume_ratio: Any) -> str:
