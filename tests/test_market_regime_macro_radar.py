@@ -8,20 +8,32 @@ from src.institutional import (
     build_market_regime_macro_radar,
     market_regime_macro_radar_api_response,
     market_regime_macro_radar_html,
+    normalize_regime_label_ko,
 )
+from src.institutional.ui import _macro_change, _macro_value
 from src.ui.korean_labels import module_title, status_label
 
 
 class DummySnapshot:
-    def __init__(self, last_close: float, change_pct: float, asof: datetime, source: str = "UnitTestFeed", quality_score: int = 90):
+    def __init__(
+        self,
+        last_close: float,
+        change_pct: float,
+        asof: datetime,
+        source: str = "UnitTestFeed",
+        quality_score: int = 90,
+        prev_close: float | None = 1.0,
+        is_fallback: bool = False,
+    ):
         self.last_close = last_close
         self.change_pct = change_pct
+        self.prev_close = prev_close
         self.asof = asof
         self.source = source
         self.frequency = "daily"
         self.unit = "market"
         self.quality_score = quality_score
-        self.is_fallback = False
+        self.is_fallback = is_fallback
         self.warnings = []
         self.errors = []
 
@@ -85,6 +97,9 @@ class MarketRegimeMacroRadarTests(unittest.TestCase):
         self.assertNotEqual(mock_state.status, "empty")
         self.assertTrue(mock_state.macro_heatmap)
         self.assertTrue(any(row.meta.is_fallback for row in mock_state.macro_heatmap))
+        self.assertEqual(0, mock_state.data_points[0].meta.confidence_score)
+        self.assertIn("모의 지표 포함", market_regime_macro_radar_html(mock_state))
+        self.assertNotIn("모의 지표 포함", market_regime_macro_radar_html(empty_state))
 
     def test_panel_renders_loading_empty_error_and_stale_states(self):
         now = datetime(2026, 7, 8, tzinfo=timezone.utc)
@@ -120,6 +135,54 @@ class MarketRegimeMacroRadarTests(unittest.TestCase):
         self.assertIn("as_of_date", meta)
         self.assertIn("fetched_at", meta)
         self.assertIn("stale_data_flag", meta)
+
+    def test_kospi_level_and_one_day_percent_are_separated(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_market_regime_macro_radar(
+            snapshots={"KOSPI": DummySnapshot(2746.79, 0.42, now, prev_close=2735.0)},
+            allow_mock=False,
+            now=now,
+        )
+        row = next(item for item in state.macro_heatmap if item.key == "kospi_momentum")
+        self.assertEqual("index_level", row.unit)
+        self.assertEqual("2,746.79", _macro_value(row))
+        self.assertEqual("+0.42%", _macro_change(row))
+        html = market_regime_macro_radar_html(state)
+        self.assertIn("<strong>2,746.79</strong>", html)
+        self.assertIn("<span>1D +0.42%</span>", html)
+        self.assertIn("macro-heatmap-compact", html)
+        self.assertNotIn("2,746.79 1D %", html)
+
+    def test_previous_close_missing_hides_one_day_percent(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_market_regime_macro_radar(
+            snapshots={"KOSDAQ": DummySnapshot(842.18, 0.31, now, prev_close=None)},
+            allow_mock=False,
+            now=now,
+        )
+        row = next(item for item in state.macro_heatmap if item.key == "kosdaq_momentum")
+        self.assertEqual("842.18", _macro_value(row))
+        self.assertEqual("", _macro_change(row))
+        self.assertNotIn("1D +0.31%", market_regime_macro_radar_html(state))
+
+    def test_regime_label_normalization_handles_korean_fx_pressure_alias(self):
+        self.assertEqual("환율 부담", normalize_regime_label_ko("FX_PRESSURE"))
+        self.assertEqual("환율 부담", normalize_regime_label_ko("환율_PRESSURE"))
+        self.assertEqual("위험선호", normalize_regime_label_ko("RISK_ON"))
+
+
+    def test_naver_fallback_snapshot_is_not_displayed_as_mock_macro_data(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_market_regime_macro_radar(
+            snapshots={"KOSPI": DummySnapshot(2746.79, 0.42, now, source="Naver Finance", is_fallback=True)},
+            allow_mock=False,
+            now=now,
+        )
+        html = market_regime_macro_radar_html(state)
+        self.assertNotIn("mock_macro_included", state.risk_flags)
+        self.assertGreater(state.data_points[0].meta.confidence_score, 0)
+        self.assertNotIn("모의 지표 포함", html)
+        self.assertNotIn("모의</span>", html)
 
 
 if __name__ == "__main__":

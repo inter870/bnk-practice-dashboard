@@ -26,7 +26,14 @@ class SourceRegistryFallbackTests(unittest.TestCase):
     def test_opendart_alias_accepts_existing_dart_api_key(self) -> None:
         opendart = get_source("opendart_financials")
         self.assertEqual((), missing_required_keys(opendart, {"DART_API_KEY": True}))
+        self.assertEqual((), missing_required_keys(opendart, {"OPEN_DART_API_KEY": True}))
         self.assertEqual(("OPENDART_API_KEY",), missing_required_keys(opendart, {"DART_API_KEY": False}))
+
+    def test_ecos_aliases_accept_legacy_names(self) -> None:
+        ecos = get_source("bok_ecos_macro")
+        self.assertEqual((), missing_required_keys(ecos, {"ECOS_API_KEY": True}))
+        self.assertEqual((), missing_required_keys(ecos, {"ECOS_AUTH_KEY": True}))
+        self.assertEqual((), missing_required_keys(ecos, {"BANK_OF_KOREA_API_KEY": True}))
 
     def test_market_price_prefers_kis_when_keys_present_and_preferred(self) -> None:
         result = resolve_best_data_source(

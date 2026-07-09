@@ -8,9 +8,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .streamlit/secrets.toml
+secrets.toml
 data/
 briefings/
 *.sqlite3
 *.db
 *.log
-

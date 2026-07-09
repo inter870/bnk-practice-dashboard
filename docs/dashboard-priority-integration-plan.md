@@ -46,9 +46,10 @@ Detected project type:
   - `src/korea_equity/service.py` returns Korea equity mock/computed data.
   - `src/discovery`, `src/execution`, `src/exits`, and `src/monitoring` hold pure or mostly pure engines.
 - Authentication/environment pattern:
-  - `config_value()` reads `.env`, environment variables, then `st.secrets`.
-  - Known keys: `DART_API_KEY`, `ECOS_API_KEY`, `OPENAI_API_KEY`, `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_BASE_URL`.
-  - `.gitignore` excludes `.env`, `.env.*`, `.streamlit/secrets.toml`, `data/`, `briefings/`, and DB/log files.
+  - `src/config/env.py` centralizes secret loading; `app.py` keeps `config_value()` only as a compatibility wrapper.
+  - Priority: existing `os.environ`, `st.secrets`, `ENV_FILE_PATH`, `APP_ENV_FILE`, `DOTENV_CONFIG_PATH`, default external `.env`, `.env.local`, `.env`, then `.streamlit/secrets.toml`.
+  - Known keys and aliases: `DART_API_KEY` / `OPENDART_API_KEY` / `OPEN_DART_API_KEY`, `ECOS_API_KEY` / `ECOS_AUTH_KEY` / `BOK_ECOS_API_KEY` / `BANK_OF_KOREA_API_KEY`, `OPENAI_API_KEY`, `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_BASE_URL`.
+  - `.gitignore` excludes `.env`, `.env.*`, `.streamlit/secrets.toml`, `secrets.toml`, `data/`, `briefings/`, and DB/log files.
 - Test framework: Python `unittest`.
 - Runtime/deploy:
   - Python `3.11.8` in `runtime.txt`.

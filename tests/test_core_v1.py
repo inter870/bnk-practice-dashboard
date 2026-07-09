@@ -86,6 +86,96 @@ class CoreV1Tests(unittest.TestCase):
         self.assertIsNone(token)
         self.assertIn("KIS_APP_KEY", error)
 
+    def test_core_market_card_labels_historical_fdr_as_recent_close(self):
+        snap = app.Snapshot(
+            "KOSPI",
+            "KOSPI",
+            2746.79,
+            2735.0,
+            11.79,
+            0.43,
+            pd.Timestamp("2026-07-08"),
+            source="FinanceDataReader",
+            unit="index",
+            frequency="historical",
+            quality_score=88,
+            is_fallback=True,
+        )
+        self.assertEqual("최근 종가", app.snapshot_metric_subtitle(snap, "현재가"))
+        label = app.snapshot_source_label(snap)
+        self.assertIn("FDR 최근 종가", label)
+        self.assertIn("실시간 아님", label)
+        self.assertIn("2026.07.08", label)
+
+    def test_core_market_card_keeps_current_label_for_naver_intraday_snapshot(self):
+        snap = app.Snapshot(
+            "KOSPI",
+            "KOSPI",
+            2750.12,
+            2735.0,
+            15.12,
+            0.55,
+            pd.Timestamp("2026-07-09 10:15"),
+            source="Naver Finance",
+            unit="index",
+            frequency="near_realtime",
+            quality_score=88,
+            is_fallback=True,
+        )
+        self.assertEqual("현재가", app.snapshot_metric_subtitle(snap, "현재가"))
+        label = app.snapshot_source_label(snap)
+        self.assertIn("네이버 금융 장중 스냅샷", label)
+        self.assertNotIn("실시간 아님", label)
+        self.assertIn("07.09 10:15", label)
+
+    def test_core_market_snapshot_prefers_plausible_current_source(self):
+        fallback = app.Snapshot(
+            "KOSPI",
+            "KOSPI",
+            2700.0,
+            2690.0,
+            10.0,
+            0.37,
+            pd.Timestamp("2026-07-08"),
+            source="FinanceDataReader",
+            unit="index",
+            frequency="historical",
+            quality_score=88,
+            is_fallback=True,
+        )
+        live = app.Snapshot(
+            "KOSPI",
+            "KOSPI",
+            2720.0,
+            2690.0,
+            30.0,
+            1.12,
+            pd.Timestamp("2026-07-09 10:20"),
+            source="Naver Finance",
+            unit="index",
+            frequency="near_realtime",
+            quality_score=88,
+            is_fallback=True,
+        )
+        self.assertIs(app.prefer_current_market_snapshot("KOSPI", fallback, live), live)
+
+        bad_live = app.Snapshot(
+            "KOSPI",
+            "KOSPI",
+            999999.0,
+            2690.0,
+            30.0,
+            1.12,
+            pd.Timestamp("2026-07-09 10:20"),
+            source="Naver Finance",
+            unit="index",
+            frequency="near_realtime",
+            quality_score=88,
+            is_fallback=True,
+        )
+        self.assertIs(app.prefer_current_market_snapshot("KOSPI", fallback, bad_live), fallback)
+        self.assertTrue(any("최근 종가" in warning for warning in (fallback.warnings or [])))
+
 
 if __name__ == "__main__":
     unittest.main()

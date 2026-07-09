@@ -5,8 +5,8 @@ This dashboard never bypasses authentication, never fabricates exact-looking val
 ## Authentication Policy
 
 - KIS broker APIs require `KIS_APP_KEY` and `KIS_APP_SECRET`.
-- OpenDART financial statements and disclosures require `OPENDART_API_KEY`. The legacy `DART_API_KEY` name is accepted as an alias for local compatibility.
-- BOK ECOS requires `BOK_ECOS_API_KEY`. The legacy `ECOS_API_KEY` name is accepted as an alias for local compatibility.
+- OpenDART financial statements and disclosures require `OPENDART_API_KEY`. `DART_API_KEY` and `OPEN_DART_API_KEY` are accepted as aliases for local compatibility.
+- BOK ECOS requires `BOK_ECOS_API_KEY`. `ECOS_API_KEY`, `ECOS_AUTH_KEY`, and `BANK_OF_KOREA_API_KEY` are accepted as aliases for local compatibility.
 - KOSIS requires `KOSIS_API_KEY` when the adapter is connected.
 - Public Data Portal sources require `PUBLIC_DATA_API_KEY` when used.
 - Secret values must never be printed, logged, rendered, or committed.
@@ -110,6 +110,6 @@ Investor flow and short selling:
 ## Troubleshooting
 
 - If KIS keys appear on a Naver Finance row, the active source registry mapping is wrong.
-- If OpenDART shows connected without a key, check `OPENDART_API_KEY` or the `DART_API_KEY` alias.
-- If BOK ECOS shows missing even with a key, check `BOK_ECOS_API_KEY` or the `ECOS_API_KEY` alias.
+- If OpenDART shows connected without a key, check `OPENDART_API_KEY`, `DART_API_KEY`, or `OPEN_DART_API_KEY`.
+- If BOK ECOS shows missing even with a key, check `BOK_ECOS_API_KEY`, `ECOS_API_KEY`, `ECOS_AUTH_KEY`, or `BANK_OF_KOREA_API_KEY`.
 - If a planned KRX adapter shows `필요 키 없음` as if complete, mark it as `adapter_missing` or `planned`.

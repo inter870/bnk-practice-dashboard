@@ -86,6 +86,10 @@ For planning-only tasks, update documentation only and do not change production 
 
 - Do not bypass authentication for APIs that require keys.
 - Do not fabricate values or fake exact precision when a reliable source is unavailable.
+- ECOS, DART, OpenDART, OpenAI, and broker API keys must be read through `src/config/env.py`.
+- Do not read API keys directly from `os.getenv`, `os.environ`, or `st.secrets` in API call sites.
+- File-based `.env` loading must not override deployment-injected environment variables.
+- Never print raw API URLs that contain API keys; sanitize exception text before display.
 - Use the central source registry for required keys, source status, accuracy grade, and fallback decisions.
 - Missing key display must be source-specific.
 - Planned adapters must show `adapter_missing` or `planned`, not "missing keys none".
@@ -97,6 +101,19 @@ For planning-only tasks, update documentation only and do not change production 
 - Never use OpenDART endpoints without `OPENDART_API_KEY` or the legacy `DART_API_KEY` alias.
 - Never claim "accurate" without a source and timestamp.
 - Do not expose, print, log, commit, or hardcode API keys.
+
+## Data Trust UI Display Rules
+
+- Do not display raw ISO timestamps in normal Data Trust dashboard UI.
+- Format Data Trust timestamps in Asia/Seoul as `YYYY.MM.DD HH:mm`.
+- Do not display `누락 없음` in normal Data Trust UI.
+- Do not display duplicate key labels such as `필요 키 필요 키 없음`.
+- Planned adapters must display `어댑터 미연결` or `연결 예정`.
+- Planned adapters must display `키 확인: 어댑터 구현 후 확인`.
+- Active keyless sources can display `필요 키: 없음` or `키 없이 공개 데이터 사용 중`.
+- Missing keys should be shown only for active key-required sources.
+- Do not make planned or missing adapters look healthy.
+- Do not fabricate exact values for unconnected adapters.
 
 ## Risk Alert UI and Data Accuracy Rules
 

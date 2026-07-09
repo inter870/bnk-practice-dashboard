@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from math import isfinite
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from .models import DataPoint, DataSourceMeta, DataTrustSourcePanelState, SourceCoverageRow
 from .source_registry import (
@@ -31,12 +32,14 @@ SOURCE_MODULES: tuple[tuple[str, str], ...] = (
     ("short_selling", "Short-selling data"),
 )
 
+KST = ZoneInfo("Asia/Seoul")
+
 
 def _now_iso(now: datetime | None = None) -> str:
-    stamp = now or datetime.now(timezone.utc)
+    stamp = now or datetime.now(KST)
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return stamp.isoformat(timespec="seconds")
+        stamp = stamp.replace(tzinfo=KST)
+    return stamp.astimezone(KST).isoformat(timespec="seconds")
 
 
 def _as_datetime(value: Any) -> datetime | None:
@@ -70,10 +73,24 @@ def _is_stale(asof: Any, *, now: datetime | None, stale_after_hours: float) -> b
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     if stamp is None:
-        return True
+        return False
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=current.tzinfo)
+    if stamp > current:
+        return False
     return (current - stamp).total_seconds() > stale_after_hours * 3600
+
+
+def _is_future_date(value: Any, *, fetched_at: str | None = None, now: datetime | None = None) -> bool:
+    stamp = _as_datetime(value)
+    if stamp is None:
+        return False
+    current = _as_datetime(fetched_at) or now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=current.tzinfo)
+    return stamp > current
 
 
 def _get(item: Any, *names: str, default: Any = None) -> Any:
@@ -164,7 +181,7 @@ def _meta(
     fetched_at: str,
     unit: str,
     quality_score: int,
-    confidence_score: int,
+    confidence_score: int | None,
     stale: bool,
     missing: bool,
     is_fallback: bool,
@@ -186,7 +203,7 @@ def _meta(
         stale_data_flag=stale,
         source_table_or_endpoint=endpoint,
         revised_at=revised_at,
-        confidence_score=max(0, min(100, confidence_score)),
+        confidence_score=None if confidence_score is None else max(0, min(100, confidence_score)),
         missing_data_flag=missing,
         warnings=warnings,
         errors=errors,
@@ -204,7 +221,7 @@ def _coverage_row(
     available_at: str | None,
     fetched_at: str,
     quality_score: int,
-    confidence_score: int,
+    confidence_score: int | None,
     stale: bool,
     missing: bool,
     is_fallback: bool,
@@ -222,6 +239,29 @@ def _coverage_row(
     can_compute_best_effort_value: bool | None = None,
 ) -> SourceCoverageRow:
     connection_status = connection_status or status
+    is_planned_source = bool(
+        (source_definition and source_definition.source_type == "planned")
+        or connection_status in {"planned", "adapter_missing"}
+        or endpoint.startswith("planned:")
+    )
+    if is_planned_source:
+        status = "planned"
+        connection_status = "planned"
+        stale = False
+        missing = False
+        is_fallback = False
+        quality_score = 0
+        confidence_score = None
+        accuracy_grade = accuracy_grade or "planned"
+        exactness_level = exactness_level or "unavailable"
+    elif connection_status == "missing_key":
+        stale = False
+    if as_of_date is None and available_at is None:
+        stale = False
+    diagnostic_notes = list(notes)
+    if _is_future_date(as_of_date, fetched_at=fetched_at) or _is_future_date(available_at, fetched_at=fetched_at):
+        diagnostic_notes.append("future_date_detected")
+        stale = False
     coverage_status = _coverage_status(connection_status)
     if stale and status == "available":
         coverage_status = "stale"
@@ -239,12 +279,12 @@ def _coverage_row(
         stale=stale,
         missing=missing,
         is_fallback=is_fallback,
-        warnings=tuple(notes),
+        warnings=tuple(diagnostic_notes),
     )
     active_source_id = source_definition.source_id if source_definition else None
     active_source_label_ko = source_definition.display_name_ko if source_definition else source
     adapter_id = source_definition.adapter_id if source_definition else endpoint
-    is_planned = bool(source_definition and source_definition.source_type == "planned")
+    is_planned = is_planned_source
     is_mock = bool(source_definition and source_definition.source_type == "mock")
     is_keyless = bool(source_definition and not source_definition.required_env_keys and source_definition.legal_access_mode == "no_key_required")
     required_keys = tuple(required_api_keys or (source_definition.required_env_keys if source_definition else ()))
@@ -264,7 +304,7 @@ def _coverage_row(
         coverage_status=coverage_status,
         required_api_keys=required_api_keys,
         missing_api_keys=missing_api_keys,
-        notes=notes,
+        notes=tuple(diagnostic_notes),
         meta=meta,
         category=source_definition.category if source_definition else module_key,
         category_label_ko=CATEGORY_LABEL_KO.get(source_definition.category if source_definition else module_key),
@@ -689,8 +729,8 @@ def build_data_trust_source_panel(
         )
     )
 
-    stale_sources = tuple(row.label for row in rows if row.meta.stale_data_flag and not row.meta.missing_data_flag)
-    missing_sources = tuple(row.label for row in rows if row.meta.missing_data_flag)
+    stale_sources = tuple(row.label for row in rows if row.meta.stale_data_flag and not row.meta.missing_data_flag and not row.is_planned and not row.is_mock)
+    missing_sources = tuple(row.label for row in rows if row.meta.missing_data_flag and not row.is_planned)
     missing_api_keys = tuple(sorted({key for row in rows for key in row.missing_api_keys}))
     latest_refresh_time = max((row.meta.fetched_at or "" for row in rows), default=None) or None
     point_in_time_status = "compliant" if not missing_sources and not stale_sources else "review_required"

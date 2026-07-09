@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from math import isfinite
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from .models import (
     DataPoint,
@@ -25,6 +26,25 @@ REGIME_LABELS = (
     "STAGFLATION_RISK",
 )
 
+KST = ZoneInfo("Asia/Seoul")
+
+REGIME_LABEL_KO = {
+    "RISK_ON": "위험선호",
+    "RISK_OFF": "위험회피",
+    "EXPORT_UPCYCLE": "수출 개선",
+    "EXPORT_DOWNTURN": "수출 둔화",
+    "RATE_PRESSURE": "금리 부담",
+    "FX_PRESSURE": "환율 부담",
+    "환율_PRESSURE": "환율 부담",
+    "LIQUIDITY_SUPPORT": "유동성 지원",
+    "STAGFLATION_RISK": "스태그플레이션 위험",
+    "mock_macro_included": "모의 지표 포함",
+}
+
+
+def normalize_regime_label_ko(label: str) -> str:
+    return REGIME_LABEL_KO.get(str(label or "").strip(), str(label or "").strip())
+
 
 MOCK_MACRO_INPUTS: dict[str, dict[str, Any]] = {
     "korea_growth": {"label": "Korea growth proxy", "value": 2.1, "change": 0.1, "unit": "% YoY", "source": "Mock macro model"},
@@ -41,10 +61,10 @@ MOCK_MACRO_INPUTS: dict[str, dict[str, Any]] = {
 
 
 def _now_iso(now: datetime | None = None) -> str:
-    stamp = now or datetime.now(timezone.utc)
+    stamp = now or datetime.now(KST)
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return stamp.isoformat(timespec="seconds")
+        stamp = stamp.replace(tzinfo=KST)
+    return stamp.astimezone(KST).isoformat(timespec="seconds")
 
 
 def _finite(value: Any) -> float | None:
@@ -66,6 +86,15 @@ def _get(item: Any, *names: str, default: Any = None) -> Any:
         if hasattr(item, name):
             return getattr(item, name)
     return default
+
+
+def _is_mock_source(source: Any) -> bool:
+    text = str(source or "").strip().lower()
+    return text.startswith("mock") or " mock " in f" {text} " or "모의" in text
+
+
+def _is_mock_indicator(row: MacroIndicatorRow) -> bool:
+    return _is_mock_source(row.meta.source)
 
 
 def _as_datetime(value: Any) -> datetime | None:
@@ -95,13 +124,15 @@ def _as_date_text(value: Any) -> str | None:
 
 def _is_stale(asof: Any, *, now: datetime | None, stale_after_hours: float) -> bool:
     stamp = _as_datetime(asof)
-    current = now or datetime.now(timezone.utc)
+    current = now or datetime.now(KST)
     if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
+        current = current.replace(tzinfo=KST)
     if stamp is None:
-        return True
+        return False
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=current.tzinfo)
+    if stamp > current:
+        return False
     return (current - stamp).total_seconds() > stale_after_hours * 3600
 
 
@@ -133,7 +164,7 @@ def _meta(
         revised_at=None,
         confidence_score=confidence,
         missing_data_flag=missing,
-        warnings=("mock input" if is_fallback else "",) if is_fallback else (),
+        warnings=("mock input" if is_fallback and _is_mock_source(source) else "",) if is_fallback and _is_mock_source(source) else (),
         errors=(),
     )
 
@@ -201,10 +232,14 @@ def _indicator_contribution(key: str, value: float | None, change: float | None)
 
 
 def _input_from_snapshot(key: str, snap: Any, label: str, unit: str, endpoint: str) -> dict[str, Any]:
+    change = _finite(_get(snap, "change_pct"))
+    previous_close = _finite(_get(snap, "prev_close", "previous_close"))
+    if key in {"kospi_momentum", "kosdaq_momentum"} and previous_close is None:
+        change = None
     return {
         "label": label,
         "value": _finite(_get(snap, "last_close")),
-        "change": _finite(_get(snap, "change_pct")),
+        "change": change,
         "unit": unit,
         "source": str(_get(snap, "source", default="market snapshot") or "market snapshot"),
         "endpoint": endpoint,
@@ -231,8 +266,8 @@ def _build_inputs(
         "usd_krw": ("USD/KRW", "USD/KRW", "KRW per USD", "market_snapshot:USD/KRW"),
         "korea_10y": ("KR 3Y", "Korea rate proxy", "%", "market_snapshot:KR 3Y"),
         "us_10y": ("US 10Y", "U.S. 10Y rate proxy", "%", "market_snapshot:US 10Y"),
-        "kospi_momentum": ("KOSPI", "KOSPI momentum", "1D %", "market_snapshot:KOSPI"),
-        "kosdaq_momentum": ("KOSDAQ", "KOSDAQ momentum", "1D %", "market_snapshot:KOSDAQ"),
+        "kospi_momentum": ("KOSPI", "KOSPI momentum", "index_level", "market_snapshot:KOSPI"),
+        "kosdaq_momentum": ("KOSDAQ", "KOSDAQ momentum", "index_level", "market_snapshot:KOSDAQ"),
         "vix": ("VIX", "Global risk proxy", "index", "market_snapshot:VIX"),
     }
     for input_key, (snapshot_key, label, unit, endpoint) in snapshot_specs.items():
@@ -341,7 +376,7 @@ def build_market_regime_macro_radar(
             fetched_at=fetched_at,
             unit="metadata",
             confidence=0,
-            stale=True,
+            stale=False,
             missing=True,
             is_fallback=True,
         )
@@ -388,7 +423,13 @@ def build_market_regime_macro_radar(
     stale = any(row.meta.stale_data_flag for row in indicators)
     missing = any(row.meta.missing_data_flag for row in indicators)
     latest_source_at = max((row.meta.fetched_at or "" for row in indicators), default=None) or None
-    avg_confidence = int(round(sum((row.meta.confidence_score or row.meta.quality_score) for row in indicators) / len(indicators))) if indicators else 0
+    confidence_inputs = [row for row in indicators if not _is_mock_indicator(row) and row.meta.confidence_score is not None]
+    avg_confidence = (
+        int(round(sum(row.meta.confidence_score or 0 for row in confidence_inputs) / len(confidence_inputs)))
+        if confidence_inputs
+        else 0
+    )
+    mock_included = any(_is_mock_indicator(row) for row in indicators)
     meta = _meta(
         source="Market Regime Macro Radar",
         endpoint="/api/dashboard/market-regime",
@@ -398,7 +439,7 @@ def build_market_regime_macro_radar(
         confidence=avg_confidence,
         stale=stale,
         missing=missing,
-        is_fallback=any(row.meta.is_fallback for row in indicators),
+        is_fallback=mock_included,
     )
     data_points = (
         DataPoint("regime_score", "Regime Score", score, meta, _display_score(score)),
@@ -407,8 +448,10 @@ def build_market_regime_macro_radar(
         DataPoint("source_freshness", "Source Freshness", "stale" if stale else "fresh", meta, "stale" if stale else "fresh"),
     )
     status = "stale" if stale else "ready"
-    summary = f"{primary} with score {score}/100. Labels: {', '.join(labels)}."
+    summary = f"{normalize_regime_label_ko(primary)} 점수 {score}/100. 핵심 라벨: {', '.join(normalize_regime_label_ko(label) for label in labels)}."
     risk_flags = tuple(label for label in labels if label in {"RISK_OFF", "RATE_PRESSURE", "FX_PRESSURE", "STAGFLATION_RISK"})
+    if mock_included:
+        risk_flags = (*risk_flags, "mock_macro_included")
     return MarketRegimeMacroRadarState(
         module_id="MarketRegimeMacroRadar",
         status=status,

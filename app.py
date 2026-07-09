@@ -39,6 +39,14 @@ from matplotlib import font_manager as fm
 from matplotlib import dates as mdates
 from bs4 import BeautifulSoup
 
+from src.config.env import (
+    check_required_secrets,
+    get_dart_api_key,
+    get_ecos_api_key,
+    get_secret,
+    load_environment,
+    sanitize_secret_text,
+)
 from src.discovery import build_universe, scan_universe
 from src.execution import build_execution_plan, should_block_for_execution
 from src.exits import build_exit_plan
@@ -140,12 +148,15 @@ from src.institutional import (
 )
 from src.ui.korea_os_theme import inject_korea_os_theme
 from src.ui.korean_market_colors import getChartSeriesColor, getKoreanMarketColorToken
+import src.institutional.market_regime as institutional_market_regime_module
 import src.institutional.ui as institutional_ui_module
 import src.ui.korea_os_theme as korea_os_theme_module
 
 
+institutional_market_regime_module = importlib.reload(institutional_market_regime_module)
 institutional_ui_module = importlib.reload(institutional_ui_module)
 korea_os_theme_module = importlib.reload(korea_os_theme_module)
+build_market_regime_macro_radar = institutional_market_regime_module.build_market_regime_macro_radar
 dart_disclosure_catalyst_panel_html = institutional_ui_module.dart_disclosure_catalyst_panel_html
 data_trust_source_panel_html = institutional_ui_module.data_trust_source_panel_html
 forward_alpha_ranking_panel_html = institutional_ui_module.forward_alpha_ranking_panel_html
@@ -164,7 +175,15 @@ DART_RECENT_URL = "https://dart.fss.or.kr/dsac001/mainAll.do"
 DART_LIST_API_URL = "https://opendart.fss.or.kr/api/list.json"
 
 
-HTTP_VERIFY_SSL = os.getenv("BNK_VERIFY_SSL", "false").strip().lower() in {"1", "true", "yes", "on"}
+ENV_LOAD_RESULT = load_environment()
+
+
+def config_value(key: str, default: str = "") -> str:
+    value = get_secret(key, required=False)
+    return value if value not in (None, "") else default
+
+
+HTTP_VERIFY_SSL = config_value("BNK_VERIFY_SSL", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def configure_http_ssl() -> None:
@@ -187,52 +206,9 @@ def configure_http_ssl() -> None:
 configure_http_ssl()
 
 
-def load_env_file(env_path: str = ".env") -> dict[str, str]:
-    path = os.path.join(os.path.dirname(__file__), env_path)
-    if not os.path.exists(path):
-        return {}
-
-    values: dict[str, str] = {}
-    try:
-        with open(path, "r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip().strip('"').strip("'")
-                if key and value:
-                    values[key] = value
-                    os.environ[key] = value
-    except Exception:
-        return values
-    return values
-
-
-ENV_FILE_VALUES = load_env_file()
-
-
-def config_value(key: str, default: str = "") -> str:
-    file_value = ENV_FILE_VALUES.get(key)
-    if file_value not in (None, ""):
-        return str(file_value).strip()
-    env_value = os.getenv(key)
-    if env_value not in (None, ""):
-        return str(env_value).strip()
-    try:
-        if key in st.secrets:
-            value = st.secrets[key]
-            if value not in (None, ""):
-                return str(value).strip()
-    except Exception:
-        pass
-    return default
-
-
-DART_API_KEY = config_value("DART_API_KEY", "YOUR_API_KEY")
+DART_API_KEY = get_dart_api_key() or ""
 DART_API_TOKEN = hashlib.sha256(DART_API_KEY.encode("utf-8")).hexdigest()[:12] if DART_API_KEY else "no-key"
-ECOS_API_KEY = config_value("ECOS_API_KEY", "YOUR_ECOS_KEY")
+ECOS_API_KEY = get_ecos_api_key() or ""
 ECOS_API_URL = "https://ecos.bok.or.kr/api/KeyStatisticList"
 OPENAI_API_KEY = config_value("OPENAI_API_KEY", "")
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
@@ -1254,6 +1230,145 @@ CUSTOM_CSS = """
         font-size: 0.75rem;
         font-weight: 760;
     }
+    .macro-heatmap-compact {
+        display: grid;
+        gap: 7px;
+        width: 100%;
+        min-width: 0;
+    }
+    .macro-heatmap-header,
+    .macro-heatmap-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1.25fr) minmax(96px, 0.7fr) 78px minmax(110px, 0.75fr);
+        align-items: center;
+        gap: 10px;
+    }
+    .macro-heatmap-header {
+        padding: 0 10px 5px 10px;
+        color: #94a3b8;
+        font-size: 0.72rem;
+        font-weight: 900;
+        line-height: 1.2;
+    }
+    .macro-heatmap-header > div:last-child {
+        text-align: right;
+    }
+    .macro-heatmap-row {
+        min-height: 48px;
+        padding: 9px 10px;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.58);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        box-shadow: inset 3px 0 0 rgba(56, 189, 248, 0.46);
+    }
+    .macro-heatmap-row.good {
+        box-shadow: inset 3px 0 0 rgba(74, 222, 128, 0.72);
+        background: linear-gradient(90deg, rgba(34, 197, 94, 0.10), rgba(15, 23, 42, 0.58) 36%);
+    }
+    .macro-heatmap-row.warn {
+        box-shadow: inset 3px 0 0 rgba(251, 191, 36, 0.78);
+        background: linear-gradient(90deg, rgba(245, 158, 11, 0.10), rgba(15, 23, 42, 0.58) 36%);
+    }
+    .macro-heatmap-row.risk {
+        box-shadow: inset 3px 0 0 rgba(251, 113, 133, 0.78);
+        background: linear-gradient(90deg, rgba(244, 63, 94, 0.10), rgba(15, 23, 42, 0.58) 36%);
+    }
+    .macro-heatmap-main {
+        display: grid;
+        gap: 3px;
+        min-width: 0;
+    }
+    .macro-heatmap-main strong {
+        color: #f8fafc;
+        font-size: 0.9rem;
+        font-weight: 950;
+        line-height: 1.18;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .macro-heatmap-main span {
+        color: #94a3b8;
+        font-size: 0.73rem;
+        font-weight: 780;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .macro-source-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 18px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        margin-left: 4px;
+        border: 1px solid rgba(251, 191, 36, 0.34);
+        background: rgba(245, 158, 11, 0.14);
+        color: #fde68a;
+        font-size: 0.68rem;
+        font-weight: 900;
+        vertical-align: middle;
+    }
+    .macro-heatmap-score {
+        display: grid;
+        grid-template-columns: minmax(44px, 1fr) 30px;
+        gap: 7px;
+        align-items: center;
+        min-width: 0;
+    }
+    .macro-score-track {
+        height: 7px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.22);
+        overflow: hidden;
+    }
+    .macro-score-fill {
+        height: 100%;
+        border-radius: 999px;
+        min-width: 3px;
+        background: linear-gradient(90deg, #38bdf8, #a78bfa);
+    }
+    .macro-heatmap-score span {
+        color: #cbd5e1;
+        font-size: 0.74rem;
+        font-weight: 900;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+    }
+    .macro-heatmap-signal {
+        display: flex;
+        justify-content: center;
+        min-width: 0;
+    }
+    .macro-heatmap-signal .pi-badge {
+        min-height: 24px;
+        padding: 4px 8px;
+        font-size: 0.72rem;
+    }
+    .macro-heatmap-value {
+        display: grid;
+        gap: 2px;
+        justify-items: end;
+        min-width: 0;
+        text-align: right;
+    }
+    .macro-heatmap-value strong {
+        color: #f8fafc;
+        font-size: 0.92rem;
+        font-weight: 950;
+        line-height: 1.1;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
+    .macro-heatmap-value span {
+        color: #cbd5e1;
+        font-size: 0.73rem;
+        font-weight: 820;
+        line-height: 1.15;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+    }
     .pi-rebalance-list {
         display: grid;
         gap: 10px;
@@ -1597,6 +1712,31 @@ CUSTOM_CSS = """
         .pi-allocation-value {
             grid-column: 1 / -1;
             text-align: left;
+        }
+        .macro-heatmap-header {
+            display: none;
+        }
+        .macro-heatmap-row {
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px 10px;
+            align-items: start;
+        }
+        .macro-heatmap-main {
+            grid-column: 1 / 2;
+        }
+        .macro-heatmap-score {
+            grid-column: 1 / 2;
+            grid-template-columns: minmax(80px, 1fr) 30px;
+            max-width: 180px;
+        }
+        .macro-heatmap-signal {
+            grid-column: 2 / 3;
+            grid-row: 1 / 2;
+            justify-content: flex-end;
+        }
+        .macro-heatmap-value {
+            grid-column: 2 / 3;
+            grid-row: 2 / 3;
         }
         .pi-rebalance-top,
         .pi-rebalance-bottom {
@@ -2461,6 +2601,98 @@ def snapshot_source_label(snap: Snapshot) -> str:
     return f"{source} · 품질 {score}"
 
 
+SOURCE_LABELS = {
+    "KIS Open API": "KIS 공식 실시간",
+    "Naver Finance": "네이버 금융 장중 스냅샷",
+    "Naver": "네이버 금융 장중 스냅샷",
+    "FinanceDataReader": "FDR 최근 종가",
+    "Alternative.me": "Alternative.me",
+    "BOK ECOS": "한국은행 ECOS",
+    "FRED": "FRED",
+}
+
+CURRENT_MARKET_FREQUENCIES = {"near_realtime", "realtime_official", "intraday"}
+CURRENT_MARKET_SOURCES = {"KIS Open API", "Naver Finance", "Naver"}
+CORE_CURRENT_KEYS = {"KOSPI", "KOSDAQ", "USD/KRW", "KR 3Y"}
+SNAPSHOT_VALUE_RANGES: dict[str, tuple[float, float]] = {
+    "KOSPI": (1000.0, 10000.0),
+    "KOSDAQ": (300.0, 2500.0),
+    "USD/KRW": (700.0, 2500.0),
+    "KR 3Y": (0.0, 15.0),
+    "US 10Y": (0.0, 15.0),
+}
+
+
+def snapshot_is_current_source(snap: Snapshot | None) -> bool:
+    if snap is None:
+        return False
+    return snap.frequency in CURRENT_MARKET_FREQUENCIES and snap.source in CURRENT_MARKET_SOURCES
+
+
+def snapshot_value_is_plausible(key: str, snap: Snapshot | None) -> bool:
+    if snap is None:
+        return False
+    value = safe_float(snap.last_close)
+    if value is None:
+        return False
+    low, high = SNAPSHOT_VALUE_RANGES.get(key, (0.0, float("inf")))
+    return low <= value <= high
+
+
+def snapshot_asof_label(snap: Snapshot | None) -> str:
+    if snap is None or snap.asof is None:
+        return "기준시각 확인 불가"
+    try:
+        stamp = pd.Timestamp(snap.asof)
+        if snapshot_is_current_source(snap):
+            return stamp.strftime("%m.%d %H:%M")
+        return stamp.strftime("%Y.%m.%d")
+    except Exception:
+        return "기준시각 확인 불가"
+
+
+def snapshot_metric_subtitle(snap: Snapshot | None, default_subtitle: str) -> str:
+    if snap is None:
+        return default_subtitle
+    if snap.key in {"KOSPI", "KOSDAQ"} and not snapshot_is_current_source(snap):
+        return "최근 종가"
+    if snap.key == "USD/KRW" and not snapshot_is_current_source(snap):
+        return "최근 환율"
+    if snap.key in {"KR 3Y", "US 10Y"} and not snapshot_is_current_source(snap):
+        return "최근 수치"
+    return default_subtitle
+
+
+def append_snapshot_warning(snap: Snapshot, message: str) -> Snapshot:
+    warnings = list(snap.warnings or [])
+    if message not in warnings:
+        warnings.append(message)
+    snap.warnings = warnings
+    return snap
+
+
+def prefer_current_market_snapshot(key: str, fallback_snap: Snapshot | None, live_snap: Snapshot | None) -> Snapshot | None:
+    if snapshot_is_current_source(live_snap) and snapshot_value_is_plausible(key, live_snap):
+        return live_snap
+    if fallback_snap is not None:
+        if key in CORE_CURRENT_KEYS:
+            append_snapshot_warning(fallback_snap, "장중 현재가 소스 연결 실패: 최근 종가/최근 수치 기준")
+            fallback_snap.quality_score = min(fallback_snap.quality_score or 0, 76)
+        return fallback_snap
+    return live_snap
+
+
+def snapshot_source_label(snap: Snapshot) -> str:
+    source = SOURCE_LABELS.get(snap.source, snap.source or "출처 미상")
+    score = snap.quality_score if snap.quality_score else 0
+    parts = [source]
+    if snap.key in CORE_CURRENT_KEYS and not snapshot_is_current_source(snap):
+        parts.append("실시간 아님")
+    parts.append(snapshot_asof_label(snap))
+    parts.append(f"품질 {score}")
+    return " · ".join(part for part in parts if part)
+
+
 ACTION_LABELS_KO = {
     "Strong Buy": "강한 검토 후보",
     "Buy on Pullback": "눌림목 검토",
@@ -2936,7 +3168,7 @@ def load_listing_cache(refresh_token: int) -> pd.DataFrame:
     return listing
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=20, show_spinner=False)
 def load_market_snapshot(refresh_token: int, watch_codes: tuple[str, ...] = ()) -> dict[str, Snapshot]:
     if fdr is None:
         return {}
@@ -2968,26 +3200,30 @@ def load_market_snapshot(refresh_token: int, watch_codes: tuple[str, ...] = ()) 
         build_snapshot(name, candidates)
 
     for name in ("KOSPI", "KOSDAQ", "USD/KRW", "KR 3Y"):
-        if name in live_data and live_data[name].last_close is not None:
-            live_snap = live_data[name]
-            fallback_snap = data.get(name)
-            data[name] = Snapshot(
-                key=name,
-                display_name=live_snap.display_name,
-                last_close=live_snap.last_close,
-                prev_close=live_snap.prev_close if live_snap.prev_close is not None else (fallback_snap.prev_close if fallback_snap else None),
-                change=live_snap.change if live_snap.change is not None else (fallback_snap.change if fallback_snap else None),
-                change_pct=live_snap.change_pct if live_snap.change_pct is not None else (fallback_snap.change_pct if fallback_snap else None),
-                asof=live_snap.asof,
-                raw=fallback_snap.raw if fallback_snap else None,
-                source=live_snap.source,
-                unit=live_snap.unit,
-                frequency=live_snap.frequency,
-                quality_score=live_snap.quality_score,
-                warnings=live_snap.warnings,
-                errors=live_snap.errors,
-                is_fallback=live_snap.is_fallback,
+        fallback_snap = data.get(name)
+        live_snap = live_data.get(name)
+        preferred_snap = prefer_current_market_snapshot(name, fallback_snap, live_snap)
+        if preferred_snap is None:
+            continue
+        if preferred_snap is live_snap:
+            data[name] = apply_snapshot_quality(
+                Snapshot(
+                    key=name,
+                    display_name=live_snap.display_name,
+                    last_close=live_snap.last_close,
+                    prev_close=live_snap.prev_close if live_snap.prev_close is not None else (fallback_snap.prev_close if fallback_snap else None),
+                    change=live_snap.change if live_snap.change is not None else (fallback_snap.change if fallback_snap else None),
+                    change_pct=live_snap.change_pct if live_snap.change_pct is not None else (fallback_snap.change_pct if fallback_snap else None),
+                    asof=live_snap.asof,
+                    raw=fallback_snap.raw if fallback_snap else live_snap.raw,
+                    source=live_snap.source,
+                    unit=live_snap.unit,
+                    frequency=live_snap.frequency,
+                    is_fallback=live_snap.is_fallback,
+                )
             )
+        else:
+            data[name] = preferred_snap
 
     fng_snap = load_fear_greed_index(refresh_token)
     if fng_snap is not None:
@@ -3399,6 +3635,7 @@ def render_card(
             change_text = f"{change_pct:+.2f}%"
         elif change is not None:
             change_text = f"{change:+.2f}"
+    subtitle = snapshot_metric_subtitle(snap, subtitle)
     source_text = snapshot_source_label(snap)
 
     st.markdown(
@@ -3934,8 +4171,8 @@ def _ecos_best_match(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_ecos_key_statistics(refresh_token: int, ecos_key: str) -> tuple[pd.DataFrame, str | None]:
-    if not ecos_key or ecos_key == "YOUR_ECOS_KEY":
-        return pd.DataFrame(), "ECOS API ?? ???? ?????. `.env`? `ECOS_API_KEY`? ?? ?? ?????."
+    if not ecos_key:
+        return pd.DataFrame(), "ECOS API 키가 설정되지 않았습니다. ENV_FILE_PATH, Streamlit Secrets 또는 서버 환경변수를 확인하세요."
 
     try:
         url = f"{ECOS_API_URL}/{ecos_key}/json/kr/1/100/"
@@ -3957,7 +4194,7 @@ def load_ecos_key_statistics(refresh_token: int, ecos_key: str) -> tuple[pd.Data
         df["_row_order"] = range(len(df))
         return df, None
     except Exception as exc:
-        return pd.DataFrame(), f"ECOS ?? ??: {exc}"
+        return pd.DataFrame(), "ECOS API 호출 실패: " + sanitize_secret_text(str(exc))
 
 
 def ecos_metric_snapshot(df: pd.DataFrame, title: str, keywords: list[str], subtitle_prefix: str = "") -> Snapshot:
@@ -5882,11 +6119,17 @@ def render_data_trust_source_panel_section(
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     parsed_rows, _ = parse_portfolio_text(holdings_text)
     using_mock = not parsed_rows
+    required_secret_status = check_required_secrets()
+    dart_present = bool(required_secret_status["dart"]["present"])
+    ecos_present = bool(required_secret_status["ecos"]["present"])
     api_key_status = {
-        "DART_API_KEY": bool(DART_API_KEY and DART_API_KEY != "YOUR_API_KEY"),
-        "OPENDART_API_KEY": bool(DART_API_KEY and DART_API_KEY != "YOUR_API_KEY"),
-        "ECOS_API_KEY": bool(ECOS_API_KEY and ECOS_API_KEY != "YOUR_ECOS_KEY"),
-        "BOK_ECOS_API_KEY": bool(ECOS_API_KEY and ECOS_API_KEY != "YOUR_ECOS_KEY"),
+        "DART_API_KEY": dart_present,
+        "OPENDART_API_KEY": dart_present,
+        "OPEN_DART_API_KEY": dart_present,
+        "ECOS_API_KEY": ecos_present,
+        "ECOS_AUTH_KEY": ecos_present,
+        "BOK_ECOS_API_KEY": ecos_present,
+        "BANK_OF_KOREA_API_KEY": ecos_present,
         "OPENAI_API_KEY": bool(OPENAI_API_KEY),
         "KIS_APP_KEY": bool(KIS_APP_KEY),
         "KIS_APP_SECRET": bool(KIS_APP_SECRET),
@@ -5911,7 +6154,9 @@ def render_market_regime_macro_radar_section(
     flag_value = os.getenv("STANCE_ENABLE_MARKET_REGIME_RADAR", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=True)
+    show_mock_value = config_value("SHOW_MOCK_DATA", config_value("DEMO_MODE", "false")).strip().lower()
+    show_mock_macro = show_mock_value in {"1", "true", "yes", "on"}
+    state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=show_mock_macro)
     st.html(market_regime_macro_radar_html(state))
 
 
@@ -8252,7 +8497,7 @@ def render_disclosure_section(
     summary_cols[1].metric("표시", f"{len(filtered):,}")
     summary_cols[2].metric("관심종목", f"{len(watch_names):,}")
     summary_cols[3].metric("분류", "규칙 기반")
-    api_state = "미설정" if DART_API_KEY == "YOUR_API_KEY" else "연결"
+    api_state = "미설정" if not DART_API_KEY else "연결"
     st.caption(f"DART API 상태: {api_state} · 데이터 기준: {last_refresh}")
     if applied_query:
         st.caption(f"검색어: {applied_query}")

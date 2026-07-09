@@ -36,6 +36,12 @@ from .models import (
     ValuationMetricRow,
     ValuationRelativeCheapnessPanelState,
 )
+from .data_trust_display import (
+    formatDataTrustMetadataKo,
+    formatKoDateTime,
+    isPlannedAdapter,
+)
+from .market_regime import normalize_regime_label_ko
 from src.ui.korean_labels import (
     action_label,
     asset_class_label,
@@ -126,6 +132,15 @@ def _source_label_ko(source: str | None) -> str:
     if "naver" in lowered:
         return "Naver Finance"
     return text
+
+
+def _is_macro_mock_source(source: Any) -> bool:
+    text = str(source or "").strip().lower()
+    return text.startswith("mock") or " mock " in f" {text} " or "모의" in text
+
+
+def _macro_row_is_mock(row: MacroIndicatorRow) -> bool:
+    return _is_macro_mock_source(row.meta.source)
 
 
 def _metric(state: PortfolioRiskCockpitState, key: str) -> DataPoint | None:
@@ -514,11 +529,197 @@ def _coverage_rows(rows: tuple[SourceCoverageRow, ...]) -> str:
     return "".join(rendered)
 
 
+def _coverage_rows(rows: tuple[SourceCoverageRow, ...]) -> str:
+    if not rows:
+        return """
+        <div class="pi-rebalance-item">
+            <div class="pi-rebalance-asset">출처 커버리지 없음</div>
+            <div class="pi-rebalance-reason">데이터 출처 메타데이터를 표시할 수 없습니다.</div>
+        </div>
+        """
+    rendered = []
+    for row in rows:
+        fields = formatDataTrustMetadataKo(row)
+        status_tone = "warn" if isPlannedAdapter(row) else _coverage_tone(row.status or row.coverage_status)
+        accuracy_tone = "warn" if fields.accuracyBadgeKo == "표시 불가" else "info"
+        key_tone = "warn" if fields.keyStatusKo.startswith(("누락 키:", "키 확인:", "선택 키")) else "info"
+        freshness_badge = (
+            f'<span class="pi-badge warn">{html.escape(fields.freshnessKo)}</span>'
+            if fields.freshnessKo
+            else ""
+        )
+        meta_parts = [
+            f"출처: {fields.sourceKo}",
+            fields.asOfDateKo,
+            fields.fetchedAtKo,
+        ]
+        if fields.availableAtKo:
+            meta_parts.append(fields.availableAtKo)
+        metadata_line = " · ".join(meta_parts)
+        rendered.append(
+            f"""
+            <div class="pi-rebalance-item data-trust-row" style="margin-bottom:10px;">
+                <div class="pi-rebalance-top" style="align-items:flex-start; gap:10px;">
+                    <div class="pi-rebalance-asset" style="min-width:0;">
+                        <strong>{html.escape(fields.titleKo)}</strong>
+                        <br/><span style="overflow-wrap:anywhere;">{html.escape(fields.endpointKo)}</span>
+                    </div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;">
+                        <span class="pi-badge {status_tone}">{html.escape(fields.statusBadgeKo)}</span>
+                        <span class="pi-badge {accuracy_tone}">{html.escape(fields.accuracyBadgeKo)}</span>
+                        {freshness_badge}
+                    </div>
+                </div>
+                <div class="pi-rebalance-reason" style="margin-top:8px;">{html.escape(fields.primaryMessageKo)}</div>
+                <div class="pi-rebalance-impact" style="margin-top:6px;">
+                    <span class="pi-badge {key_tone}" style="margin-right:6px;">{html.escape(fields.keyStatusKo)}</span>
+                    <span>{html.escape(fields.confidenceKo)}</span>
+                </div>
+                <div class="pi-rebalance-impact" style="margin-top:6px; overflow-wrap:anywhere;">{html.escape(metadata_line)}</div>
+            </div>
+            """
+        )
+    return "".join(rendered)
+
+
+def _coverage_status_counts(rows: tuple[SourceCoverageRow, ...]) -> dict[str, int]:
+    counts = {"connected": 0, "partial": 0, "stale": 0, "missing_key": 0, "planned": 0, "mock": 0}
+    for row in rows:
+        status = "planned" if isPlannedAdapter(row) else row.status or row.coverage_status
+        if row.is_mock:
+            status = "mock"
+        elif row.meta.stale_data_flag and status not in {"missing_key", "planned"}:
+            status = "stale"
+        if status in {"available", "connected", "manual"}:
+            counts["connected"] += 1
+        elif status in {"partial", "partially_connected"}:
+            counts["partial"] += 1
+        elif status == "stale":
+            counts["stale"] += 1
+        elif status == "missing_key":
+            counts["missing_key"] += 1
+        elif status == "planned":
+            counts["planned"] += 1
+        elif status == "mock":
+            counts["mock"] += 1
+    return counts
+
+
+def _coverage_summary_metrics(rows: tuple[SourceCoverageRow, ...]) -> str:
+    counts = _coverage_status_counts(rows)
+    items = [
+        ("정상", counts["connected"], "good"),
+        ("부분 연결", counts["partial"], "info"),
+        ("업데이트 필요", counts["stale"], "warn"),
+        ("키 누락", counts["missing_key"], "risk"),
+        ("연결 예정", counts["planned"], "warn"),
+        ("모의 데이터", counts["mock"], "warn"),
+    ]
+    return "".join(
+        f"""
+        <div class="pi-rebalance-item" style="min-height:74px;">
+            <div class="pi-rebalance-top">
+                <div class="pi-rebalance-asset">{html.escape(label)}</div>
+                <span class="pi-badge {tone}">{html.escape(str(count))}</span>
+            </div>
+        </div>
+        """
+        for label, count, tone in items
+    )
+
+
+def _coverage_rows(rows: tuple[SourceCoverageRow, ...]) -> str:
+    if not rows:
+        return """
+        <div class="pi-rebalance-item">
+            <div class="pi-rebalance-asset">출처 커버리지 없음</div>
+            <div class="pi-rebalance-reason">데이터 출처 메타데이터를 표시할 수 없습니다.</div>
+        </div>
+        """
+
+    header = """
+    <div class="pi-signal-row" style="grid-template-columns:minmax(132px,1.1fr) 92px minmax(120px,1fr) 104px 96px 92px minmax(150px,1.1fr); font-weight:700;">
+        <div>데이터</div>
+        <div>상태</div>
+        <div>출처</div>
+        <div>기준일</div>
+        <div>신선도</div>
+        <div>신뢰도</div>
+        <div>조치</div>
+    </div>
+    """
+    body: list[str] = [header]
+    detail_rows: list[str] = []
+    for row in rows:
+        fields = formatDataTrustMetadataKo(row)
+        status = "planned" if isPlannedAdapter(row) else row.status or row.coverage_status
+        if row.is_mock:
+            status = "mock"
+        tone = "warn" if status in {"planned", "stale", "mock"} else _coverage_tone(status)
+        accuracy_tone = "warn" if fields.accuracyBadgeKo == "표시 불가" else "info"
+        accuracy_badge = (
+            ""
+            if fields.accuracyBadgeKo == fields.statusBadgeKo
+            else f'<span class="pi-badge {accuracy_tone}">{html.escape(fields.accuracyBadgeKo)}</span>'
+        )
+        confidence = fields.confidenceKo.replace("신뢰도 ", "")
+        reference_date = fields.asOfDateKo.replace("기준일: ", "")
+        action = fields.actionRequiredKo or fields.keyStatusKo
+        freshness = fields.freshnessKo or ("일정 미정" if isPlannedAdapter(row) else "정상")
+        source = fields.sourceKo
+        body.append(
+            f"""
+            <div class="pi-signal-row data-trust-compact-row" style="grid-template-columns:minmax(132px,1.1fr) 92px minmax(120px,1fr) 104px 96px 92px minmax(150px,1.1fr);">
+                <div><strong>{html.escape(fields.titleKo)}</strong></div>
+                <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                    <span class="pi-badge {tone}">{html.escape(fields.statusBadgeKo)}</span>
+                    {accuracy_badge}
+                </div>
+                <div>{html.escape(source)}</div>
+                <div>{html.escape(reference_date)}</div>
+                <div>{html.escape(freshness)}</div>
+                <div>{html.escape(confidence)}</div>
+                <div>{html.escape(action)}</div>
+            </div>
+            """
+        )
+        required = ", ".join(row.required_keys or row.required_api_keys) if (row.required_keys or row.required_api_keys) else "해당 없음"
+        missing = ", ".join(row.missing_keys or row.missing_api_keys) if (row.missing_keys or row.missing_api_keys) else ""
+        missing_line = f" · 누락 키: {html.escape(missing)}" if missing and not isPlannedAdapter(row) else ""
+        notes = " / ".join(ko_sentence(note) for note in row.notes[:3]) if row.notes else "진단 메시지 없음"
+        detail_rows.append(
+            f"""
+            <div class="pi-rebalance-item">
+                <div class="pi-rebalance-top">
+                    <div class="pi-rebalance-asset">{html.escape(fields.titleKo)}</div>
+                    <span class="pi-badge {tone}">{html.escape(fields.statusBadgeKo)}</span>
+                </div>
+                <div class="pi-rebalance-reason">{html.escape(fields.primaryMessageKo)}</div>
+                <div class="pi-rebalance-impact" style="overflow-wrap:anywhere;">
+                    {html.escape(fields.endpointKo)} · 필요 키: {html.escape(required)}{missing_line}
+                </div>
+                <div class="pi-rebalance-impact" style="overflow-wrap:anywhere;">
+                    {html.escape(fields.asOfDateKo)} · {html.escape(fields.fetchedAtKo)} · {html.escape(fields.availableAtKo or '사용 가능 시점: 해당 없음')}
+                </div>
+                <div class="pi-rebalance-impact">{html.escape(notes)}</div>
+            </div>
+            """
+        )
+    details = f"""
+    <details class="pi-rebalance-item" style="margin-top:10px;">
+        <summary style="cursor:pointer; font-weight:700;">데이터 진단 상세 보기</summary>
+        <div style="margin-top:10px;">{''.join(detail_rows)}</div>
+    </details>
+    """
+    return "".join(body) + details
+
+
 def data_trust_source_panel_html(state: DataTrustSourcePanelState) -> str:
-    stale_text = ", ".join(state.stale_sources[:4]) if state.stale_sources else "없음"
-    missing_text = ", ".join(state.missing_sources[:4]) if state.missing_sources else "없음"
-    key_text = ", ".join(state.missing_api_keys) if state.missing_api_keys else "없음"
+    key_text = ", ".join(state.missing_api_keys) if state.missing_api_keys else "필수 키 경고 없음"
     pit_tone = "good" if state.point_in_time_status == "compliant" else "warn"
+    latest_refresh_text = formatKoDateTime(state.latest_refresh_time)
+    stale_text = ", ".join(state.stale_sources[:4]) if state.stale_sources else "업데이트 필요 항목 없음"
+    missing_text = ", ".join(state.missing_sources[:4]) if state.missing_sources else "확인된 누락 소스 없음"
     return f"""
     <section class="portfolio-intelligence-shell" aria-label="DataTrustSourcePanel" data-module-id="DataTrustSourcePanel">
         <div class="portfolio-intelligence-title">
@@ -532,49 +733,59 @@ def data_trust_source_panel_html(state: DataTrustSourcePanelState) -> str:
             </div>
         </div>
         <div class="portfolio-intelligence-grid">
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>{html.escape(ui_label("Refresh & Trust"))}</strong><span>{html.escape(ui_label("metadata contract"))}</span></div>
-                <div class="pi-card-body">
-                    <div class="pi-rebalance-item">
-                        <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(ui_label("Latest refresh"))}</div><span class="pi-badge info">수집 시각</span></div>
-                        <div class="pi-rebalance-amount" style="text-align:left; margin-top:6px;">{html.escape(state.latest_refresh_time or 'N/A')}</div>
-                        <div class="pi-rebalance-impact">{html.escape(ko_sentence("All rows include source, endpoint, as_of_date, available_at, fetched_at, confidence, stale, and missing flags."))}</div>
-                    </div>
-                    <div class="pi-rebalance-item">
-                        <div class="pi-rebalance-asset">{html.escape(ui_label("API key warnings"))}</div>
-                        <div class="pi-rebalance-reason">{html.escape(key_text)}</div>
-                        <div class="pi-rebalance-impact">{html.escape(ko_sentence("Only key names are shown. Secret values are never rendered."))}</div>
-                    </div>
-                </div>
-            </div>
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>{html.escape(ui_label("Data Gaps"))}</strong><span>{html.escape(ui_label("stale / missing"))}</span></div>
-                <div class="pi-card-body">
-                    <div class="pi-rebalance-item">
-                        <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(ui_label("Stale warnings"))}</div><span class="pi-badge warn">{html.escape(str(len(state.stale_sources)))}</span></div>
-                        <div class="pi-rebalance-reason">{html.escape(stale_text)}</div>
-                    </div>
-                    <div class="pi-rebalance-item">
-                        <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(ui_label("Missing modules"))}</div><span class="pi-badge risk">{html.escape(str(len(state.missing_sources)))}</span></div>
-                        <div class="pi-rebalance-reason">{html.escape(missing_text)}</div>
-                    </div>
-                </div>
-            </div>
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>{html.escape(ui_label("Point-in-Time Gate"))}</strong><span>{html.escape(ui_label("anti look-ahead"))}</span></div>
-                <div class="pi-card-body">
-                    <div class="pi-rebalance-item">
-                        <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(ui_label("Compliance status"))}</div><span class="pi-badge {pit_tone}">{html.escape(status_label(state.point_in_time_status))}</span></div>
-                        <div class="pi-rebalance-reason">{html.escape(ko_sentence("DART and macro data must use receipt_date, available_at, or fetched_at before analytics consume them."))}</div>
-                        <div class="pi-rebalance-impact">{html.escape(ko_sentence("This is a metadata review gate, not a trading signal."))}</div>
-                    </div>
-                </div>
-            </div>
+            {_coverage_summary_metrics(state.source_coverage)}
         </div>
         <div class="pi-card" style="margin-top:14px;">
-            <div class="pi-card-header"><strong>{html.escape(ui_label("Source Coverage Table"))}</strong><span>/api/dashboard/data-trust</span></div>
-            <div class="pi-card-body">{_coverage_rows(state.source_coverage)}</div>
+            <div class="pi-card-header"><strong>데이터 출처 커버리지</strong><span>{html.escape(latest_refresh_text)}</span></div>
+            <div class="pi-card-body">
+                <div class="pi-rebalance-item" style="margin-bottom:10px;">
+                    <div class="pi-rebalance-top">
+                        <div class="pi-rebalance-asset">키 상태 요약</div>
+                        <span class="pi-badge {pit_tone}">PIT {html.escape(status_label(state.point_in_time_status))}</span>
+                    </div>
+                    <div class="pi-rebalance-reason">{html.escape(key_text)}</div>
+                    <div class="pi-rebalance-impact">키 이름만 표시하며 실제 secret 값은 렌더링하지 않습니다.</div>
+                </div>
+                {_coverage_rows(state.source_coverage)}
+            </div>
         </div>
+        <details class="pi-card" style="margin-top:14px;">
+            <summary class="pi-card-header" style="cursor:pointer;">
+                <strong>데이터 신뢰도 기준</strong><span>신선도·출처·{html.escape(ui_label("Point-in-Time Gate"))}</span>
+            </summary>
+            <div class="pi-card-body">
+                <div class="pi-rebalance-item">
+                    <div class="pi-rebalance-top">
+                        <div class="pi-rebalance-asset">최근 수집</div>
+                        <span class="pi-badge info">수집 시각</span>
+                    </div>
+                    <div class="pi-rebalance-amount" style="text-align:left; margin-top:6px;">{html.escape(latest_refresh_text)}</div>
+                    <div class="pi-rebalance-impact">모든 행은 출처, endpoint, 기준일, 사용 가능 시점, 수집 시각, 신뢰도, stale/missing 플래그를 포함합니다.</div>
+                </div>
+                <div class="pi-rebalance-item">
+                    <div class="pi-rebalance-top">
+                        <div class="pi-rebalance-asset">{html.escape(ui_label("Stale warnings"))}</div>
+                        <span class="pi-badge warn">{html.escape(str(len(state.stale_sources)))}</span>
+                    </div>
+                    <div class="pi-rebalance-reason">{html.escape(stale_text)}</div>
+                </div>
+                <div class="pi-rebalance-item">
+                    <div class="pi-rebalance-top">
+                        <div class="pi-rebalance-asset">누락 소스</div>
+                        <span class="pi-badge risk">{html.escape(str(len(state.missing_sources)))}</span>
+                    </div>
+                    <div class="pi-rebalance-reason">{html.escape(missing_text)}</div>
+                </div>
+                <div class="pi-rebalance-item">
+                    <div class="pi-rebalance-top">
+                        <div class="pi-rebalance-asset">{html.escape(ui_label("Point-in-Time Gate"))}</div>
+                        <span class="pi-badge {pit_tone}">{html.escape(status_label(state.point_in_time_status))}</span>
+                    </div>
+                    <div class="pi-rebalance-reason">DART와 매크로 데이터는 분석에 쓰기 전에 접수일, 사용 가능 시점, 수집 시각 기준으로 검토합니다.</div>
+                    <div class="pi-rebalance-impact">이 패널은 거래 신호가 아니라 데이터 검증 게이트입니다.</div>
+                </div>
+            </div>
+        </details>
     </section>
     """
 
@@ -591,30 +802,76 @@ def _macro_signal_tone(signal: str) -> str:
 def _macro_value(row: MacroIndicatorRow) -> str:
     if row.value is None:
         return "N/A"
-    if row.unit in {"%", "% YoY", "1D %"}:
-        return f"{row.value:.2f}{row.unit.replace('%', '%') if row.unit == '%' else ' ' + row.unit}"
+    if row.unit == "index_level":
+        return f"{row.value:,.2f}"
+    if row.unit == "%":
+        return f"{row.value:.2f}%"
+    if row.unit == "% YoY":
+        return f"{row.value:.2f}% YoY"
+    if row.unit == "1D %":
+        return f"{row.value:.2f}%"
     if row.unit == "KRW per USD":
         return f"{row.value:,.2f}"
     return f"{row.value:,.2f} {row.unit}"
 
 
+def _macro_change(row: MacroIndicatorRow) -> str:
+    if row.change is None:
+        return ""
+    if row.key in {"kospi_momentum", "kosdaq_momentum"}:
+        return f"{row.change:+.2f}%"
+    if row.unit == "%":
+        return f"{row.change:+.2f}%p"
+    if row.unit == "% YoY":
+        return f"{row.change:+.2f}%p"
+    if row.unit == "KRW per USD":
+        return f"{row.change:+.2f}%"
+    return f"{row.change:+.2f}"
+
+
 def _macro_heatmap_rows(rows: tuple[MacroIndicatorRow, ...]) -> str:
     if not rows:
         return f'<div class="pi-rebalance-reason">{html.escape(ko_sentence("No macro indicators available."))}</div>'
-    rendered = []
+    rendered = [
+        """
+        <div class="macro-heatmap-header" role="row">
+            <div>지표</div>
+            <div>점수</div>
+            <div>신호</div>
+            <div>현재값</div>
+        </div>
+        """
+    ]
     for row in rows:
         width = max(3, min(100, row.score))
         tone = _macro_signal_tone(row.signal)
+        change_text = _macro_change(row)
+        value_text = _macro_value(row)
+        change_label = f"1D {change_text}" if change_text and row.key in {"kospi_momentum", "kosdaq_momentum"} else change_text
+        source_line = html.escape(row.meta.source)
+        mock_badge = '<span class="macro-source-badge warn">모의</span>' if _macro_row_is_mock(row) else ""
         rendered.append(
             f"""
-            <div class="pi-allocation-row">
-                <div class="pi-asset-label">{html.escape(row.label)}<br/><small>{html.escape(row.meta.source)}</small></div>
-                <div class="pi-allocation-track"><div class="pi-allocation-fill" style="width:{width:.1f}%;"></div></div>
-                <div class="pi-allocation-value"><span class="pi-badge {tone}">{html.escape(signal_label(row.signal))}</span><br/><small>{html.escape(_macro_value(row))}</small></div>
+            <div class="macro-heatmap-row {tone}" role="row">
+                <div class="macro-heatmap-main">
+                    <strong>{html.escape(row.label)}</strong>
+                    <span>{source_line} {mock_badge}</span>
+                </div>
+                <div class="macro-heatmap-score" aria-label="{html.escape(row.label)} 점수 {row.score}">
+                    <div class="macro-score-track"><div class="macro-score-fill" style="width:{width:.1f}%;"></div></div>
+                    <span>{html.escape(str(row.score))}</span>
+                </div>
+                <div class="macro-heatmap-signal">
+                    <span class="pi-badge {tone}">{html.escape(signal_label(row.signal))}</span>
+                </div>
+                <div class="macro-heatmap-value">
+                    <strong>{html.escape(value_text)}</strong>
+                    {f'<span>{html.escape(change_label)}</span>' if change_label else '<span>변화율 없음</span>'}
+                </div>
             </div>
             """
         )
-    return "".join(rendered)
+    return f'<div class="macro-heatmap-compact" role="table" aria-label="매크로 히트맵 compact table">{"".join(rendered)}</div>'
 
 
 def _sector_tailwind_rows(rows: tuple[SectorTailwindRow, ...]) -> str:
@@ -662,41 +919,112 @@ def _recent_change_rows(rows: tuple[RecentMacroChange, ...]) -> str:
     return "".join(rendered)
 
 
-def market_regime_macro_radar_html(state: MarketRegimeMacroRadarState) -> str:
-    if state.status == "loading":
-        body = f'<div class="pi-rebalance-item"><div class="pi-rebalance-asset">{html.escape(status_label("loading"))}</div><div class="pi-rebalance-reason">{html.escape(ko_sentence("Market regime data is being prepared."))}</div></div>'
-    elif state.status == "error":
-        body = f'<div class="pi-rebalance-item"><div class="pi-rebalance-asset">{html.escape(status_label("error"))}</div><div class="pi-rebalance-reason">{html.escape(ko_sentence("Market regime calculation failed."))}</div></div>'
-    elif state.status == "empty":
-        body = f'<div class="pi-rebalance-item"><div class="pi-rebalance-asset">매크로 데이터 없음</div><div class="pi-rebalance-reason">{html.escape(ko_sentence("Connect market or macro sources to calculate the regime radar."))}</div></div>'
-    else:
-        label_badges = "".join(f'<span class="pi-badge info">{html.escape(label)}</span>' for label in state.regime_labels)
-        body = f"""
-        <div class="portfolio-intelligence-grid">
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>{html.escape(ui_label("Regime Score"))}</strong><span>{html.escape(ui_label("risk-on / risk-off"))}</span></div>
-                <div class="pi-card-body">
-                    <div class="pi-rebalance-item">
-                        <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(state.current_regime_label)}</div><span class="pi-badge {_coverage_tone(state.status)}">{html.escape(status_label(state.status))}</span></div>
-                        <div class="pi-rebalance-amount" style="text-align:left; margin-top:6px;">{state.regime_score}/100</div>
-                        <div class="pi-rebalance-impact">최근 출처 시각 {html.escape(state.latest_source_at or 'N/A')}</div>
-                    </div>
-                    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">{label_badges}</div>
+def _sector_driver_rows(rows: tuple[SectorTailwindRow, ...], label: str, *, limit: int = 3) -> str:
+    selected = [row for row in rows if row.label == label][:limit]
+    if not selected:
+        return '<div class="pi-rebalance-reason">표시할 섹터가 없습니다.</div>'
+    rendered: list[str] = []
+    for row in selected:
+        positives = ", ".join(ko_sentence(item) for item in row.positive_drivers[:2]) if row.positive_drivers else "근거 부족"
+        negatives = ", ".join(ko_sentence(item) for item in row.negative_drivers[:2]) if row.negative_drivers else "부담 요인 제한"
+        rendered.append(
+            f"""
+            <div class="pi-rebalance-item">
+                <div class="pi-rebalance-top">
+                    <div class="pi-rebalance-asset">{html.escape(row.sector)}</div>
+                    <span class="pi-badge {_macro_signal_tone(row.label)}">{html.escape(str(row.tailwind_score))}/100</span>
+                </div>
+                <div class="pi-rebalance-reason">순풍: {html.escape(positives)}</div>
+                <div class="pi-rebalance-impact">역풍: {html.escape(negatives)}</div>
+            </div>
+            """
+        )
+    return "".join(rendered)
+
+
+def _macro_source_detail_rows(rows: tuple[MacroIndicatorRow, ...]) -> str:
+    if not rows:
+        return '<div class="pi-rebalance-reason">진단할 매크로 지표가 없습니다.</div>'
+    rendered: list[str] = []
+    for row in rows:
+        mock = " · 모의 데이터" if _macro_row_is_mock(row) else ""
+        stale = " · 업데이트 필요" if row.meta.stale_data_flag else ""
+        rendered.append(
+            f"""
+            <div class="pi-rebalance-item">
+                <div class="pi-rebalance-top">
+                    <div class="pi-rebalance-asset">{html.escape(row.label)}</div>
+                    <span class="pi-badge {_macro_signal_tone(row.signal)}">{html.escape(signal_label(row.signal))}</span>
+                </div>
+                <div class="pi-rebalance-reason">{html.escape(_macro_value(row))}{html.escape(' / ' + _macro_change(row) if _macro_change(row) else '')}</div>
+                <div class="pi-rebalance-impact" style="overflow-wrap:anywhere;">
+                    출처: {html.escape(row.meta.source)} · endpoint: {html.escape(row.meta.source_table_or_endpoint or '확인 필요')}{html.escape(mock)}{html.escape(stale)}
                 </div>
             </div>
+            """
+        )
+    return "".join(rendered)
+
+
+def market_regime_macro_radar_html(state: MarketRegimeMacroRadarState) -> str:
+    if state.status == "loading":
+        body = f'<div class="pi-rebalance-item"><div class="pi-rebalance-asset">{html.escape(status_label("loading"))}</div><div class="pi-rebalance-reason">시장 국면 데이터를 준비하고 있습니다.</div></div>'
+    elif state.status == "error":
+        body = f'<div class="pi-rebalance-item"><div class="pi-rebalance-asset">{html.escape(status_label("error"))}</div><div class="pi-rebalance-reason">시장 국면 계산에 실패했습니다.</div></div>'
+    elif state.status == "empty":
+        body = '<div class="pi-rebalance-item"><div class="pi-rebalance-asset">매크로 데이터 없음</div><div class="pi-rebalance-reason">시장 또는 매크로 출처를 연결하면 국면 레이더를 계산할 수 있습니다.</div></div>'
+    else:
+        mock_included = any(_macro_row_is_mock(row) for row in state.macro_heatmap)
+        label_badges = "".join(f'<span class="pi-badge info">{html.escape(normalize_regime_label_ko(label))}</span>' for label in state.regime_labels)
+        mock_badge = '<span class="pi-badge warn">모의 지표 포함</span>' if mock_included else ""
+        latest_text = formatKoDateTime(state.latest_source_at)
+        current_regime = normalize_regime_label_ko(state.current_regime_label)
+        body = f"""
+        <div class="pi-card">
+            <div class="pi-card-header"><strong>시장 국면 요약</strong><span>위험선호/위험회피</span></div>
+            <div class="pi-card-body">
+                <div class="pi-rebalance-item">
+                    <div class="pi-rebalance-top">
+                        <div class="pi-rebalance-asset">{html.escape(current_regime)}</div>
+                        <span class="pi-badge {_coverage_tone(state.status)}">{html.escape(status_label(state.status))}</span>
+                    </div>
+                    <div class="pi-rebalance-amount" style="text-align:left; margin-top:6px;">{state.regime_score}/100</div>
+                    <div class="pi-rebalance-reason">{html.escape(state.summary)}</div>
+                    <div class="pi-rebalance-impact">{html.escape(latest_text)}</div>
+                </div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">{label_badges}{mock_badge}</div>
+            </div>
+        </div>
+        <div class="portfolio-intelligence-grid" style="margin-top:14px;">
             <div class="pi-card">
-                <div class="pi-card-header"><strong>{html.escape(ui_label("Macro Heatmap"))}</strong><span>{html.escape(ui_label("tailwinds / headwinds"))}</span></div>
-                <div class="pi-card-body">{_macro_heatmap_rows(state.macro_heatmap)}</div>
+                <div class="pi-card-header"><strong>순풍 TOP 3</strong><span>우호 섹터</span></div>
+                <div class="pi-card-body">{_sector_driver_rows(state.sector_tailwinds, "tailwind")}</div>
             </div>
             <div class="pi-card">
-                <div class="pi-card-header"><strong>{html.escape(ui_label("Recent Changes"))}</strong><span>{html.escape(ui_label("what moved"))}</span></div>
-                <div class="pi-card-body"><div class="pi-rebalance-list">{_recent_change_rows(state.recent_changes)}</div></div>
+                <div class="pi-card-header"><strong>역풍 TOP 3</strong><span>부담 섹터</span></div>
+                <div class="pi-card-body">{_sector_driver_rows(state.sector_tailwinds, "headwind")}</div>
+            </div>
+            <div class="pi-card">
+                <div class="pi-card-header"><strong>중립 TOP 3</strong><span>방향성 확인</span></div>
+                <div class="pi-card-body">{_sector_driver_rows(state.sector_tailwinds, "neutral")}</div>
             </div>
         </div>
         <div class="pi-card" style="margin-top:14px;">
-            <div class="pi-card-header"><strong>{html.escape(ui_label("Sector Tailwind Table"))}</strong><span>{html.escape(ui_label("context only, no stock recommendation"))}</span></div>
-            <div class="pi-card-body">{_sector_tailwind_rows(state.sector_tailwinds)}</div>
+            <div class="pi-card-header"><strong>매크로 히트맵</strong><span>compact table</span></div>
+            <div class="pi-card-body">{_macro_heatmap_rows(state.macro_heatmap)}</div>
         </div>
+        <details class="pi-card" style="margin-top:14px;">
+            <summary class="pi-card-header" style="cursor:pointer;">
+                <strong>매크로 진단 상세 보기</strong><span>출처·endpoint·최근 변화</span>
+            </summary>
+            <div class="pi-card-body">
+                <div class="pi-rebalance-item">
+                    <div class="pi-rebalance-asset">최근 변화</div>
+                    <div class="pi-rebalance-list">{_recent_change_rows(state.recent_changes)}</div>
+                </div>
+                {_macro_source_detail_rows(state.macro_heatmap)}
+            </div>
+        </details>
         """
     return f"""
     <section class="portfolio-intelligence-shell" aria-label="MarketRegimeMacroRadar" data-module-id="MarketRegimeMacroRadar">
