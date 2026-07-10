@@ -292,26 +292,43 @@ def calculateBeta(portfolioReturns: Iterable[float], benchmarkReturns: Iterable[
     return result if math.isfinite(result) else None
 
 
-def calculateTopHoldingWeight(holdings: Iterable[Holding | dict[str, Any]]) -> float:
+def _concentration_denominator(values: list[float], total_portfolio_value: float | None) -> float:
+    supplied_total = _finite(total_portfolio_value)
+    invested_total = sum(values)
+    if supplied_total is None:
+        return invested_total
+    return max(invested_total, supplied_total)
+
+
+def calculateTopHoldingWeight(
+    holdings: Iterable[Holding | dict[str, Any]],
+    total_portfolio_value: float | None = None,
+) -> float:
     values = [_holding_value(holding) for holding in holdings or []]
-    total = sum(values)
+    total = _concentration_denominator(values, total_portfolio_value)
     if total <= 0 or not values:
         return 0.0
     return max(values) / total
 
 
-def calculateHerfindahlIndex(holdings: Iterable[Holding | dict[str, Any]]) -> float:
+def calculateHerfindahlIndex(
+    holdings: Iterable[Holding | dict[str, Any]],
+    total_portfolio_value: float | None = None,
+) -> float:
     values = [_holding_value(holding) for holding in holdings or []]
-    total = sum(values)
+    total = _concentration_denominator(values, total_portfolio_value)
     if total <= 0:
         return 0.0
     return sum((value / total) ** 2 for value in values)
 
 
-def calculateConcentrationRisk(holdings: Iterable[Holding | dict[str, Any]]) -> dict[str, Any]:
+def calculateConcentrationRisk(
+    holdings: Iterable[Holding | dict[str, Any]],
+    total_portfolio_value: float | None = None,
+) -> dict[str, Any]:
     holdings = list(holdings or [])
-    top_weight = calculateTopHoldingWeight(holdings)
-    hhi = calculateHerfindahlIndex(holdings)
+    top_weight = calculateTopHoldingWeight(holdings, total_portfolio_value)
+    hhi = calculateHerfindahlIndex(holdings, total_portfolio_value)
     if top_weight > 0.20 or hhi > 0.20:
         level = "High"
     elif top_weight >= 0.10 or hhi >= 0.12:

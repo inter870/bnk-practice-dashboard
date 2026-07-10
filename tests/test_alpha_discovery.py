@@ -43,6 +43,9 @@ class AlphaDiscoveryTests(unittest.TestCase):
         self.assertIsNotNone(strong_candidate)
         self.assertIsNotNone(weak_candidate)
         self.assertGreater(strong_candidate.discovery_score, weak_candidate.discovery_score)
+        self.assertIsNone(strong_candidate.expected_edge)
+        self.assertIsNone(strong_candidate.quality_adjusted_rr)
+        self.assertTrue(any("표본외 보정" in warning for warning in strong_candidate.warnings))
 
     def test_graceful_unavailable_when_history_loader_fails(self):
         universe = [{"code": "000001", "name": "테스트", "market": "KOSPI"}]
@@ -64,4 +67,3 @@ class AlphaDiscoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

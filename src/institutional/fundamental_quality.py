@@ -3,8 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from math import isfinite
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from .models import DataPoint, DataSourceMeta, FundamentalQualityPanelState, FundamentalQualityRow, ROICValuationPoint
+
+
+KST = ZoneInfo("Asia/Seoul")
 
 
 MOCK_FINANCIAL_INPUTS: tuple[dict[str, Any], ...] = (
@@ -121,10 +125,17 @@ def _as_datetime(value: Any) -> datetime | None:
             return value.to_pydatetime()
     except Exception:
         pass
+    text = str(value).strip()
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+    if stamp.tzinfo is None:
+        if len(text) == 10 and text[4:5] == "-" and text[7:8] == "-":
+            stamp = stamp.replace(hour=23, minute=59, second=59, tzinfo=KST)
+        else:
+            stamp = stamp.replace(tzinfo=KST)
+    return stamp
 
 
 def _as_date_text(value: Any) -> str | None:
@@ -158,13 +169,14 @@ def _meta(
     stale: bool,
     missing: bool = False,
     is_fallback: bool = False,
+    available_at: str | None = None,
 ) -> DataSourceMeta:
     return DataSourceMeta(
         source=source,
         provider=source,
         source_url=None,
         as_of_date=as_of_date,
-        available_at=as_of_date,
+        available_at=available_at or as_of_date,
         fetched_at=fetched_at,
         frequency="financial_statement",
         unit="ratio",
@@ -432,8 +444,10 @@ def _build_row(item: Any, *, now: datetime | None, stale_after_hours: float, fal
     quality_score = scores["quality_score"]
     quality_label = _label(quality_score, flags, _finite(metrics.get("operating_income_growth")))
     available_at = _get(latest, "available_at", "availableAt") if latest else _get(item, "available_at", "availableAt")
-    as_of_date = _as_date_text(available_at)
-    stale = _is_stale(available_at, now=now, stale_after_hours=stale_after_hours) if available_at else True
+    available_stamp = _as_datetime(available_at)
+    available_at_text = _now_iso(available_stamp) if available_stamp is not None else None
+    as_of_date = _as_date_text(available_stamp)
+    stale = _is_stale(available_stamp, now=now, stale_after_hours=stale_after_hours) if available_stamp else True
     missing = latest is None and not any(_finite(_get(item, key)) is not None for key in ["roe", "roa", "roic"])
     meta = _meta(
         source=str(_get(item, "source", default="Mock OpenDART financial statements") or "Mock OpenDART financial statements"),
@@ -444,6 +458,7 @@ def _build_row(item: Any, *, now: datetime | None, stale_after_hours: float, fal
         stale=stale,
         missing=missing,
         is_fallback=fallback or bool(_get(item, "is_fallback", "isFallback", default=False)),
+        available_at=available_at_text,
     )
     return FundamentalQualityRow(
         code=str(_get(item, "code", "symbol", default="")),
@@ -475,7 +490,7 @@ def _build_row(item: Any, *, now: datetime | None, stale_after_hours: float, fal
         valuation_percentile=_finite(_get(item, "valuation_percentile", "valuationPercentile")),
         per=_finite(_get(item, "per")),
         pbr=_finite(_get(item, "pbr")),
-        available_at=as_of_date,
+        available_at=available_at_text,
         accounting_flags=flags,
         meta=meta,
     )

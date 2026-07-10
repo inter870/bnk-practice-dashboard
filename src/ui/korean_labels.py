@@ -177,6 +177,15 @@ TEXT_LABELS = {
     "source-aware indicators": "출처 확인 지표",
     "Portfolio & Sector Impact": "포트폴리오·섹터 영향",
     "interpretation": "해석",
+    "KRW weakness impact": "원화 약세 영향",
+    "USD asset translation": "달러 자산 환산 효과",
+    "Exporter tailwind/headwind": "수출주 환율 순풍·역풍",
+    "Growth stock rate pressure": "성장주 금리 부담",
+    "Bank / insurance sensitivity": "은행·보험 금리 민감도",
+    "Korea rate proxy": "한국 금리 추정",
+    "U.S. 10Y rate proxy": "미국 10년물 금리 추정",
+    "KOSPI momentum": "KOSPI 모멘텀",
+    "KOSDAQ momentum": "KOSDAQ 모멘텀",
     "Market Valuation Summary": "시장 밸류에이션 요약",
     "relative cheapness": "상대 저평가",
     "Market percentile": "시장 분위",
@@ -266,6 +275,11 @@ TEXT_LABELS = {
 }
 
 EXACT_SENTENCES = {
+    "NEUTRAL": "중립",
+    "HIGH_FX_PRESSURE": "환율 압력 높음",
+    "ELEVATED_FX_PRESSURE": "환율 압력 상승",
+    "HIGH_RATE_PRESSURE": "금리 압력 높음",
+    "ELEVATED_RATE_PRESSURE": "금리 압력 상승",
     "No allocation data.": "배분 데이터가 없습니다.",
     "No holdings data.": "보유종목 데이터가 없습니다.",
     "No major alert": "중요 알림 없음",
@@ -346,6 +360,24 @@ EXACT_SENTENCES = {
     "BaselineRuleScore ranks forward alpha candidates from economically meaningful features. No automatic trading is implemented.": "기본 규칙 점수는 경제적으로 의미 있는 특징으로 미래 알파 후보를 정렬합니다. 자동매매는 없습니다.",
     "Risk-controlled target weights and monitoring alerts are ready. No automatic order execution is implemented.": "리스크 제어 목표 비중과 모니터링 알림을 표시합니다. 자동 주문 실행은 없습니다.",
     "No holdings source is connected.": "보유종목 출처가 연결되어 있지 않습니다.",
+    "No valuation source is available.": "사용 가능한 밸류에이션 출처가 없습니다.",
+    "No financial statement source is available.": "사용 가능한 재무제표 출처가 없습니다.",
+    "No investor flow, short-selling, or liquidity data is available.": "사용 가능한 수급·공매도·유동성 데이터가 없습니다.",
+    "A weaker KRW may support export revenue translation but can pressure foreign outflows and input costs.": "원화 약세는 수출 매출 환산에 우호적일 수 있지만 외국인 자금 유출과 원가 부담을 높일 수 있습니다.",
+    "Estimated portfolio KRW translation impact is N/A without non-KRW holdings.": "원화 외 통화 보유자산이 없어 포트폴리오 환산 효과를 계산할 수 없습니다.",
+    "FX is a context input only; revenue mix, hedging, and input costs must be checked separately.": "환율은 맥락 지표이며 매출 통화 구성, 환헤지, 원재료 비용을 별도로 확인해야 합니다.",
+    "Higher discount rates can pressure valuation multiples for growth stocks.": "할인율 상승은 성장주의 밸류에이션 배수에 부담을 줄 수 있습니다.",
+    "Rate level can help financial margins, but curve shape and credit risk decide the final effect.": "금리 수준은 금융업 마진에 우호적일 수 있지만 최종 영향은 장단기 금리차와 신용위험에 달려 있습니다.",
+    "Domestic demand / importers": "내수주·수입주",
+    "Export translation tailwind": "수출 매출 환산 순풍",
+    "KRW assets": "원화 자산",
+    "USD assets after KRW rebound": "원화 반등 시 달러 자산",
+    "Domestic stocks": "내수주",
+    "Exporters losing FX tailwind": "환율 순풍이 약해지는 수출주",
+    "Long-duration growth": "장기 성장주",
+    "Banks if curve compresses": "장단기 금리차 축소 시 은행",
+    "Borrowers / duration assets": "차입기업·장기 듀레이션 자산",
+    "Net-interest-margin beneficiaries": "순이자마진 수혜 금융주",
     "No current source snapshot is available.": "현재 사용할 수 있는 출처 스냅샷이 없습니다.",
     "One or more snapshots are stale.": "하나 이상의 스냅샷이 오래되었습니다.",
     "Valuation adapter is not connected in this module.": "이 모듈에는 밸류에이션 어댑터가 연결되어 있지 않습니다.",
@@ -354,6 +386,7 @@ EXACT_SENTENCES = {
     "Short-selling source is not connected yet.": "공매도 출처가 아직 연결되지 않았습니다.",
     "No DART disclosure events are available.": "DART 공시 이벤트가 없습니다.",
     "No point-in-time DART disclosures are available for the selected cutoff.": "선택 기준시점에 사용할 수 있는 DART 공시가 없습니다.",
+    "No point-in-time feature rows are available for ranking.": "시점 기준을 충족하는 랭킹 특징 데이터가 없습니다.",
     "Optimizer excludes or avoids severe-risk candidates before assigning target weights.": "최적화는 목표 비중 산정 전에 중대 위험 후보를 제외하거나 회피 처리합니다.",
     "Mock holdings and optimizer outputs are shown until real portfolio holdings are connected.": "실제 보유종목 연결 전까지 데모 보유종목과 최적화 결과를 표시합니다.",
 }
@@ -411,6 +444,164 @@ def rating_label(value: Any) -> str:
 
 def action_label(value: Any) -> str:
     return _lookup(ACTION_LABELS, value)
+
+
+STOCK_NAME_LABELS = {
+    "Samsung Electronics": "삼성전자",
+    "SK hynix": "SK하이닉스",
+    "KB Financial": "KB금융",
+    "NAVER": "네이버",
+    "HMM": "HMM",
+    "Doosan Enerbility": "두산에너빌리티",
+}
+
+SECTOR_LABELS = {
+    "Semiconductors": "반도체",
+    "Banks / Insurance": "은행·보험",
+    "Internet / Growth": "인터넷·성장주",
+    "Industrials": "산업재",
+    "Materials / Industrials": "소재·산업재",
+    "Semiconductor": "반도체",
+}
+
+ALPHA_DRIVER_LABELS = {
+    "valuation data unavailable": "밸류에이션 데이터 부족",
+    "PBR below 1": "PBR 1배 미만",
+    "cheap versus history": "과거 대비 저평가",
+    "expensive versus history": "과거 대비 고평가",
+    "fundamental quality unavailable": "펀더멘털 품질 데이터 부족",
+    "high fundamental quality": "펀더멘털 품질 우수",
+    "ROIC above quality threshold": "ROIC가 품질 기준 상회",
+    "strong FCF conversion": "FCF 전환율 우수",
+    "quality deteriorating": "품질 지표 악화",
+    "no recent DART catalyst": "최근 DART 촉매 부재",
+    "shareholder return / value-up event": "주주환원·밸류업 이벤트",
+    "smart money flow unavailable": "수급 데이터 부족",
+    "foreign accumulation": "외국인 누적 순매수",
+    "institution accumulation": "기관 누적 순매수",
+    "short squeeze setup candidate": "숏스퀴즈 가능성 후보",
+    "distribution risk elevated": "분산 매도 위험 상승",
+    "fragile long structure": "취약한 롱 포지션 구조",
+    "macro regime unavailable": "매크로 국면 데이터 부족",
+    "sector-specific macro unavailable": "섹터별 매크로 데이터 부족",
+    "risk appetite": "위험선호",
+    "exports": "수출",
+    "semi exports": "반도체 수출",
+    "export cycle": "수출 사이클",
+    "export demand": "수출 수요",
+    "rate level": "금리 수준",
+    "stale data risk": "오래된 데이터 위험",
+}
+
+RISK_FLAG_LABELS = {
+    "severe_accounting_risk": "중대 회계 위험",
+    "severe_dilution_risk": "중대 희석 위험",
+    "delisting_or_administrative_risk": "상장폐지·관리종목 위험",
+    "liquidity_risk": "유동성 위험",
+    "stale_data_risk": "오래된 데이터 위험",
+    "stale_feature_data": "오래된 특징 데이터",
+    "fallback_feature_stack": "보조 특징 데이터 사용",
+    "high_risk_override_active": "고위험 차단 규칙 적용",
+    "low_cfo_to_net_income": "순이익 대비 영업현금흐름 약함",
+    "high_accrual_ratio": "발생주의 비중 높음",
+    "negative_fcf_conversion": "FCF 전환율 음수",
+    "high_debt_to_equity": "부채비율 부담",
+    "low_interest_coverage": "이자보상배율 약함",
+    "operating_income_deterioration": "영업이익 악화",
+}
+
+CLEAN_DART_CATEGORY_LABELS = {
+    "share_buyback": "자사주 매입",
+    "treasury_stock_cancellation": "자사주 소각",
+    "dividend_increase": "배당 확대",
+    "large_contract": "대규모 수주",
+    "earnings_improvement": "실적 개선",
+    "value_up_plan": "밸류업 계획",
+    "strategic_partnership": "전략적 제휴",
+    "regulatory_approval": "규제 승인",
+    "paid_in_capital_increase": "유상증자",
+    "cb_bw_eb_issuance": "CB/BW/EB 발행",
+    "dilution_risk": "주식 희석 위험",
+    "audit_issue": "감사 이슈",
+    "litigation": "소송",
+    "embezzlement_breach_of_trust": "횡령·배임",
+    "trading_halt": "거래정지",
+    "administrative_issue": "관리종목 이슈",
+    "delisting_risk": "상장폐지 위험",
+    "earnings_shock": "실적 쇼크",
+    "other": "기타 공시",
+}
+
+MACRO_DRIVER_LABELS = {
+    "semi exports": "반도체 수출",
+    "export cycle": "수출 사이클",
+    "rates": "금리 부담",
+    "risk appetite": "위험선호",
+    "rate level": "금리 레벨",
+    "risk-off": "위험회피",
+    "export demand": "수출 수요",
+    "FX pressure": "환율 부담",
+    "RISK_ON": "위험선호",
+    "RISK_OFF": "위험회피",
+    "EXPORT_UPCYCLE": "수출 개선",
+    "EXPORT_DOWNTURN": "수출 둔화",
+    "RATE_PRESSURE": "금리 부담",
+    "FX_PRESSURE": "환율 부담",
+    "LIQUIDITY_SUPPORT": "유동성 지원",
+    "STAGFLATION_RISK": "스태그플레이션 위험",
+}
+
+
+def stock_name_label(value: Any) -> str:
+    return _lookup(STOCK_NAME_LABELS, value)
+
+
+def sector_label(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    return SECTOR_LABELS.get(text, text.replace(" / ", "·"))
+
+
+def clean_dart_category_label(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    return CLEAN_DART_CATEGORY_LABELS.get(text, dart_category_label(text))
+
+
+def risk_flag_label(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return ""
+    return RISK_FLAG_LABELS.get(text, ALPHA_DRIVER_LABELS.get(text, text.replace("_", " ")))
+
+
+def _macro_driver_label(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    return MACRO_DRIVER_LABELS.get(text, text.replace("_", " "))
+
+
+def alpha_driver_label(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return ""
+    if text in ALPHA_DRIVER_LABELS:
+        return ALPHA_DRIVER_LABELS[text]
+    if text in RISK_FLAG_LABELS:
+        return RISK_FLAG_LABELS[text]
+    prefix_map = (
+        ("positive DART catalyst:", "긍정 공시 촉매"),
+        ("negative DART risk:", "부정 공시 리스크"),
+        ("macro tailwind:", "매크로 순풍"),
+        ("macro headwind:", "매크로 역풍"),
+        ("market regime", "시장 국면"),
+    )
+    for prefix, label in prefix_map:
+        if text.startswith(prefix):
+            remainder = text[len(prefix) :].strip()
+            if "DART" in prefix:
+                remainder = clean_dart_category_label(remainder)
+            elif "macro" in prefix or prefix == "market regime":
+                remainder = _macro_driver_label(remainder)
+            return f"{label}: {remainder}" if remainder else label
+    return ko_sentence(text.replace("_", " "))
 
 
 def asset_class_label(value: Any) -> str:

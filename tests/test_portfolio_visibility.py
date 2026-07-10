@@ -5,6 +5,12 @@ import unittest
 APP_TEXT = Path(__file__).resolve().parents[1].joinpath("app.py").read_text(encoding="utf-8")
 
 
+def function_text(name: str) -> str:
+    start = APP_TEXT.index(f"def {name}")
+    end = APP_TEXT.find("\ndef ", start + 1)
+    return APP_TEXT[start:] if end < 0 else APP_TEXT[start:end]
+
+
 class PortfolioVisibilityTests(unittest.TestCase):
     def test_portfolio_intelligence_shell_classes_exist(self) -> None:
         for token in [
@@ -24,8 +30,7 @@ class PortfolioVisibilityTests(unittest.TestCase):
             self.assertIn(token, APP_TEXT)
 
     def test_top_portfolio_cards_render_inside_one_dark_grid(self) -> None:
-        section_start = APP_TEXT.index("def render_portfolio_intelligence_section")
-        section_text = APP_TEXT[section_start : section_start + 4000]
+        section_text = function_text("render_portfolio_intelligence_section")
         self.assertIn('<section class="portfolio-intelligence-shell"', section_text)
         self.assertIn('<div class="portfolio-intelligence-grid">', section_text)
         self.assertIn("portfolio_health_card_html", section_text)
@@ -70,11 +75,10 @@ class PortfolioVisibilityTests(unittest.TestCase):
         self.assertIn("후보 행동", insight_text)
 
     def test_detail_section_renders_cards_before_charts(self) -> None:
-        section_start = APP_TEXT.index("def render_portfolio_intelligence_section")
-        section_text = APP_TEXT[section_start : section_start + 7000]
+        section_text = function_text("render_portfolio_intelligence_section")
         self.assertIn("리스크·신호·인사이트", section_text)
         self.assertIn("risk_return_panel_html(portfolio_metrics, relative_return)", section_text)
-        self.assertIn("concentration_card_html(holdings, concentration)", section_text)
+        self.assertIn("concentration_card_html(holdings, concentration, total_value)", section_text)
         self.assertIn("insight_engine_card_html(insights, portfolio_metrics)", section_text)
         self.assertIn("watchlist_signals_card_html(watchlist_signals)", section_text)
         self.assertNotIn("st.caption(f\"벤치마크 대비 기간 초과수익", section_text)

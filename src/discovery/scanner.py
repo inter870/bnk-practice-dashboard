@@ -114,6 +114,10 @@ def score_candidate(
     history: pd.DataFrame,
     benchmark_close: pd.Series | None = None,
     market_regime_score: float = 50.0,
+    *,
+    calibrated_win_probability: float | None = None,
+    calibration_confidence: float | None = None,
+    calibration_sample_size: int = 0,
 ) -> DiscoveryCandidate | None:
     warnings: list[str] = []
     if history is None or history.empty:
@@ -232,9 +236,18 @@ def score_candidate(
         upside_pct = ((high_252 or latest) / latest - 1.0) * 100.0
         if risk_pct > 0:
             rr = upside_pct / risk_pct
-            confidence_base = 0.35 + max(score, 0) / 200.0
-            expected_edge = confidence_base * upside_pct - (1.0 - confidence_base) * risk_pct - 0.5
-            qrr = rr * clamp(score / 100.0, 0.25, 0.95)
+            calibrated_probability = safe_float(calibrated_win_probability)
+            calibrated_confidence = safe_float(calibration_confidence)
+            if (
+                calibrated_probability is not None
+                and 0.0 <= calibrated_probability <= 1.0
+                and calibrated_confidence is not None
+                and calibration_sample_size >= 30
+            ):
+                expected_edge = calibrated_probability * upside_pct - (1.0 - calibrated_probability) * risk_pct - 0.5
+                qrr = rr * clamp(calibrated_confidence / 100.0, 0.0, 1.0)
+            else:
+                warnings.append("기대값·품질조정 손익비는 표본외 보정 전 계산하지 않음")
             if rr >= 1.8:
                 positive.append(f"손익비 {rr:.2f}x")
             elif rr < 0.8:
@@ -259,6 +272,8 @@ def score_candidate(
 
     confidence = clamp(45 + (10 if rs is not None else -8) + (10 if adv20 is not None else -8) + min(len(positive) * 3, 15) - len(warnings) * 5, 15, 90)
     max_position = 0.0 if category == "매수 금지 후보" else clamp((score - 45) / 55 * 0.10, 0.0, 0.10)
+    if expected_edge is None:
+        max_position = 0.0
     if market_regime_score < 45:
         max_position *= 0.6
 
@@ -308,4 +323,3 @@ def scan_universe(
 
     ranked = sorted(candidates, key=lambda row: (row.discovery_score, row.confidence), reverse=True)
     return ranked[:limit], warnings[:20]
-

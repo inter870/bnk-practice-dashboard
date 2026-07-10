@@ -44,15 +44,19 @@ from .data_trust_display import (
 from .market_regime import normalize_regime_label_ko
 from src.ui.korean_labels import (
     action_label,
+    alpha_driver_label,
     asset_class_label,
     dart_category_label,
     ko_sentence,
     module_title,
     rating_label,
+    risk_flag_label,
     severity_label,
+    sector_label,
     signal_label,
     source_meta_line,
     status_label,
+    stock_name_label,
     ui_label,
 )
 from src.ui.korean_market_colors import (
@@ -854,10 +858,10 @@ def _macro_heatmap_rows(rows: tuple[MacroIndicatorRow, ...]) -> str:
             f"""
             <div class="macro-heatmap-row {tone}" role="row">
                 <div class="macro-heatmap-main">
-                    <strong>{html.escape(row.label)}</strong>
+                    <strong>{html.escape(ui_label(row.label))}</strong>
                     <span>{source_line} {mock_badge}</span>
                 </div>
-                <div class="macro-heatmap-score" aria-label="{html.escape(row.label)} 점수 {row.score}">
+                <div class="macro-heatmap-score" aria-label="{html.escape(ui_label(row.label))} 점수 {row.score}">
                     <div class="macro-score-track"><div class="macro-score-fill" style="width:{width:.1f}%;"></div></div>
                     <span>{html.escape(str(row.score))}</span>
                 </div>
@@ -879,12 +883,12 @@ def _sector_tailwind_rows(rows: tuple[SectorTailwindRow, ...]) -> str:
         return f'<div class="pi-rebalance-reason">{html.escape(ko_sentence("No sector tailwind data available."))}</div>'
     rendered = []
     for row in rows[:6]:
-        positives = ", ".join(ko_sentence(item) for item in row.positive_drivers) if row.positive_drivers else "없음"
-        negatives = ", ".join(ko_sentence(item) for item in row.negative_drivers) if row.negative_drivers else "없음"
+        positives = ", ".join(alpha_driver_label(item) for item in row.positive_drivers) if row.positive_drivers else "없음"
+        negatives = ", ".join(alpha_driver_label(item) for item in row.negative_drivers) if row.negative_drivers else "없음"
         rendered.append(
             f"""
             <div class="pi-signal-row" style="grid-template-columns:minmax(130px,1fr) 76px minmax(160px,1.2fr);">
-                <div><strong>{html.escape(row.sector)}</strong><br/><span>+ {html.escape(positives)} / - {html.escape(negatives)}</span></div>
+                <div><strong>{html.escape(sector_label(row.sector))}</strong><br/><span>+ {html.escape(positives)} / - {html.escape(negatives)}</span></div>
                 <div>{html.escape(str(row.tailwind_score))}/100</div>
                 <div><span class="pi-badge {_macro_signal_tone(row.label)}">{html.escape(signal_label(row.label))}</span></div>
             </div>
@@ -908,7 +912,7 @@ def _recent_change_rows(rows: tuple[RecentMacroChange, ...]) -> str:
             f"""
             <div class="pi-rebalance-item">
                 <div class="pi-rebalance-top">
-                    <div class="pi-rebalance-asset">{html.escape(row.label)}</div>
+                    <div class="pi-rebalance-asset">{html.escape(ui_label(row.label))}</div>
                     <span class="pi-badge {tone_map.get(row.impact, 'info')}">{html.escape(severity_label(row.impact))}</span>
                 </div>
                 <div class="pi-rebalance-reason">{html.escape(ko_sentence(row.change_text))}</div>
@@ -925,13 +929,13 @@ def _sector_driver_rows(rows: tuple[SectorTailwindRow, ...], label: str, *, limi
         return '<div class="pi-rebalance-reason">표시할 섹터가 없습니다.</div>'
     rendered: list[str] = []
     for row in selected:
-        positives = ", ".join(ko_sentence(item) for item in row.positive_drivers[:2]) if row.positive_drivers else "근거 부족"
-        negatives = ", ".join(ko_sentence(item) for item in row.negative_drivers[:2]) if row.negative_drivers else "부담 요인 제한"
+        positives = ", ".join(alpha_driver_label(item) for item in row.positive_drivers[:2]) if row.positive_drivers else "근거 부족"
+        negatives = ", ".join(alpha_driver_label(item) for item in row.negative_drivers[:2]) if row.negative_drivers else "부담 요인 제한"
         rendered.append(
             f"""
             <div class="pi-rebalance-item">
                 <div class="pi-rebalance-top">
-                    <div class="pi-rebalance-asset">{html.escape(row.sector)}</div>
+                    <div class="pi-rebalance-asset">{html.escape(sector_label(row.sector))}</div>
                     <span class="pi-badge {_macro_signal_tone(row.label)}">{html.escape(str(row.tailwind_score))}/100</span>
                 </div>
                 <div class="pi-rebalance-reason">순풍: {html.escape(positives)}</div>
@@ -1054,7 +1058,7 @@ def _fx_signal_tone(signal: str) -> str:
 
 def _fx_value(row: FXRatesIndicatorRow) -> str:
     if row.value is None:
-        return "N/A"
+        return "데이터 없음"
     if row.unit == "%":
         return f"{row.value:.2f}%"
     if row.unit.startswith("KRW per"):
@@ -1064,7 +1068,7 @@ def _fx_value(row: FXRatesIndicatorRow) -> str:
 
 def _fx_change(row: FXRatesIndicatorRow) -> str:
     if row.change is None:
-        return "N/A"
+        return "변화 없음"
     suffix = "%p" if row.unit == "%" else "%"
     return f"{row.change:+.2f}{suffix}"
 
@@ -1080,7 +1084,7 @@ def _fx_indicator_rows(rows: tuple[FXRatesIndicatorRow, ...]) -> str:
         rendered.append(
             f"""
             <div class="pi-allocation-row">
-                <div class="pi-asset-label">{html.escape(row.label)}<br/><small>{html.escape(row.meta.source)}{html.escape(stale)}</small></div>
+                <div class="pi-asset-label">{html.escape(ui_label(row.label))}<br/><small>{html.escape(row.meta.source)}{html.escape(stale)}</small></div>
                 <div class="pi-allocation-track"><div class="pi-allocation-fill" style="width:{width:.1f}%;"></div></div>
                 <div class="pi-allocation-value"><span class="pi-badge {tone}">{html.escape(signal_label(row.signal))}</span><br/><small>{html.escape(_fx_value(row))} / {html.escape(_fx_change(row))}</small></div>
             </div>
@@ -1099,10 +1103,10 @@ def _fx_impact_rows(rows: tuple[FXRatesImpactRow, ...]) -> str:
             f"""
             <div class="pi-rebalance-item">
                 <div class="pi-rebalance-top">
-                    <div class="pi-rebalance-asset">{html.escape(row.channel)}</div>
+                    <div class="pi-rebalance-asset">{html.escape(ui_label(row.channel))}</div>
                     <span class="pi-badge {tone}">{row.impact_score}/100</span>
                 </div>
-                <div class="pi-rebalance-reason">우호: {html.escape(row.favored)} · 부담: {html.escape(row.pressured)}</div>
+                <div class="pi-rebalance-reason">우호: {html.escape(ko_sentence(row.favored))} · 부담: {html.escape(ko_sentence(row.pressured))}</div>
                 <div class="pi-rebalance-impact">{html.escape(ko_sentence(row.interpretation))}</div>
             </div>
             """
@@ -1118,8 +1122,8 @@ def krw_rates_fx_dashboard_html(state: KRWRatesFXDashboardState) -> str:
     elif state.status == "empty":
         body = f'<div class="pi-rebalance-item"><div class="pi-rebalance-asset">환율·금리 데이터 없음</div><div class="pi-rebalance-reason">{html.escape(ko_sentence("Connect FX or rates sources to calculate this dashboard."))}</div></div>'
     else:
-        curve_text = "N/A" if state.yield_curve_slope is None else f"{state.yield_curve_slope:+.2f}%p"
-        impact_text = "N/A" if state.portfolio_krw_impact_pct is None else f"{state.portfolio_krw_impact_pct * 100:+.2f}%"
+        curve_text = "계산 불가" if state.yield_curve_slope is None else f"{state.yield_curve_slope:+.2f}%p"
+        impact_text = "계산 불가" if state.portfolio_krw_impact_pct is None else f"{state.portfolio_krw_impact_pct * 100:+.2f}%"
         body = f"""
         <div class="portfolio-intelligence-grid">
             <div class="pi-card">
@@ -1816,10 +1820,15 @@ def _alpha_tone(rating: str) -> str:
     return "warn" if tone == "risk-warning" else tone
 
 
-def _alpha_drivers(items: tuple[str, ...], empty_label: str) -> str:
+def _alpha_driver_chips(items: tuple[str, ...], empty_label: str, *, kind: str) -> str:
     if not items:
-        return html.escape(ko_sentence(empty_label))
-    return " / ".join(html.escape(ko_sentence(item)) for item in items[:3])
+        return f'<span class="pi-badge info" style="white-space:normal;">{html.escape(empty_label)}</span>'
+    tone = {"positive": "good", "negative": "warn", "risk": "risk"}.get(kind, "info")
+    formatter = risk_flag_label if kind == "risk" else alpha_driver_label
+    return " ".join(
+        f'<span class="pi-badge {tone}" style="white-space:normal; justify-content:flex-start; margin:2px 3px 2px 0;">{html.escape(formatter(item))}</span>'
+        for item in items[:4]
+    )
 
 
 def _alpha_rows(rows: tuple[ForwardAlphaRankRow, ...], empty_label: str) -> str:
@@ -1832,18 +1841,25 @@ def _alpha_rows(rows: tuple[ForwardAlphaRankRow, ...], empty_label: str) -> str:
         """
     rendered = []
     for row in rows[:8]:
-        risk_line = _alpha_drivers(row.risk_flags, "리스크 플래그 없음")
-        positive_line = _alpha_drivers(row.positive_drivers, "긍정 근거 없음")
-        negative_line = _alpha_drivers(row.negative_drivers, "부정 근거 없음")
+        display_name = stock_name_label(row.name)
+        display_sector = sector_label(row.sector)
+        risk_line = _alpha_driver_chips(row.risk_flags, "리스크 플래그 없음", kind="risk")
+        positive_line = _alpha_driver_chips(row.positive_drivers, "긍정 근거 없음", kind="positive")
+        negative_line = _alpha_driver_chips(row.negative_drivers, "부정 근거 없음", kind="negative")
         warning = f"<br/><small>{html.escape(ko_sentence(row.stale_data_warning))}</small>" if row.stale_data_warning else ""
         rendered.append(
             f"""
-            <div class="pi-signal-row" style="grid-template-columns:minmax(160px,1fr) 76px 86px minmax(180px,1.2fr) minmax(140px,1fr);">
-                <div><strong>{html.escape(row.name)}</strong><br/><span>{html.escape(row.code)} | {html.escape(row.sector)}</span></div>
+            <div class="pi-signal-row alpha-rank-row" style="grid-template-columns:minmax(170px,1fr) 76px 86px minmax(190px,1.15fr) minmax(220px,1.45fr); align-items:start;">
+                <div><strong>{html.escape(display_name)}</strong><br/><span>{html.escape(row.code)} | {html.escape(display_sector)}</span></div>
                 <div>알파<br/><strong>{row.final_alpha_score}</strong></div>
                 <div>신뢰도<br/><strong>{row.confidence_score}</strong></div>
-                <div><span class="pi-badge {_alpha_tone(row.rating)}">{html.escape(rating_label(row.rating))}</span><br/><small>리스크: {risk_line}</small>{warning}</div>
-                <div><strong>+</strong> {positive_line}<br/><small><strong>-</strong> {negative_line}</small></div>
+                <div><span class="pi-badge {_alpha_tone(row.rating)}">{html.escape(rating_label(row.rating))}</span><br/><small style="display:block; margin-top:6px;">리스크</small><div>{risk_line}</div>{warning}</div>
+                <div>
+                    <small style="display:block; margin-bottom:4px; color:#bbf7d0; font-weight:850;">긍정 근거</small>
+                    <div>{positive_line}</div>
+                    <small style="display:block; margin:8px 0 4px; color:#fde68a; font-weight:850;">점검할 부담 요인</small>
+                    <div>{negative_line}</div>
+                </div>
             </div>
             """
         )
@@ -1870,9 +1886,9 @@ def _alpha_component_rows(rows: tuple[ForwardAlphaRankRow, ...]) -> str:
         rendered.append(
             f"""
             <div class="pi-rebalance-item">
-                <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(row.name)}</div><span class="pi-badge {_alpha_tone(row.rating)}">{row.final_alpha_score}</span></div>
+                <div class="pi-rebalance-top"><div class="pi-rebalance-asset">{html.escape(stock_name_label(row.name))}</div><span class="pi-badge {_alpha_tone(row.rating)}">{row.final_alpha_score}</span></div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">{pills}</div>
-                <div class="pi-rebalance-impact">리스크 감점 {row.risk_penalty} · 스냅샷 {html.escape(row.feature_snapshot_id)}</div>
+                <div class="pi-rebalance-impact">리스크 감점 {row.risk_penalty} · 스냅샷 {html.escape(row.feature_snapshot_id or "확인 불가")}</div>
             </div>
             """
         )

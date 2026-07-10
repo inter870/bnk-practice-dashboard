@@ -125,7 +125,7 @@ def _holding_map(holdings: Iterable[Any]) -> dict[str, dict[str, Any]]:
             "code": code,
             "name": str(_get(item, "name", default=code) or code),
             "sector": str(_get(item, "sector", default="Unclassified") or "Unclassified"),
-            "market": str(_get(item, "market", default="KOSPI") or "KOSPI"),
+            "market": str(_get(item, "market", default="UNKNOWN") or "UNKNOWN").upper(),
             "current_weight": max(0.0, weight if weight is not None else 0.0),
             "current_value": max(0.0, current_value),
         }
@@ -134,8 +134,16 @@ def _holding_map(holdings: Iterable[Any]) -> dict[str, dict[str, Any]]:
 
 def _row_cap(row: ForwardAlphaRankRow, holdings_by_code: dict[str, dict[str, Any]], constraints: OptimizerConstraints) -> tuple[float, list[str]]:
     reasons: list[str] = []
-    market = str(holdings_by_code.get(row.code, {}).get("market", "KOSPI")).upper()
-    cap = constraints.max_kosdaq_single_stock_weight if "KOSDAQ" in market else constraints.max_single_stock_weight
+    holding_market = str(holdings_by_code.get(row.code, {}).get("market", "") or "").upper()
+    row_market = str(getattr(row, "market", "UNKNOWN") or "UNKNOWN").upper()
+    market = holding_market if holding_market not in {"", "UNKNOWN", "N/A"} else row_market
+    if "KOSDAQ" in market:
+        cap = constraints.max_kosdaq_single_stock_weight
+    elif "KOSPI" in market:
+        cap = constraints.max_single_stock_weight
+    else:
+        cap = min(constraints.max_single_stock_weight, constraints.max_kosdaq_single_stock_weight)
+        reasons.append("market unknown; conservative cap applied")
     if row.liquidity_score is not None and row.liquidity_score < 30:
         cap = min(cap, constraints.illiquid_cap)
         reasons.append("illiquid stock capped")
@@ -154,8 +162,44 @@ def optimize_target_weights(
     constraints = constraints or OptimizerConstraints()
     holdings_by_code = _holding_map(holdings or [])
     rows = list(alpha_rows)
+    alpha_codes = {row.code for row in rows}
     eligible: list[tuple[ForwardAlphaRankRow, float, float]] = []
     targets: dict[str, float] = {}
+    sector_allocated: dict[str, float] = {}
+    stock_budget = max(0.0, 1.0 - constraints.cash_buffer)
+
+    # Preserve every current holding in the review universe. Without alpha data,
+    # scale current weights proportionally so ticker ordering cannot drive trims.
+    unscored_candidates: dict[str, tuple[float, str]] = {}
+    for code, holding in sorted(holdings_by_code.items()):
+        if code in alpha_codes:
+            continue
+        market = str(holding.get("market", "UNKNOWN")).upper()
+        cap = (
+            constraints.max_kosdaq_single_stock_weight
+            if "KOSDAQ" in market
+            else constraints.max_single_stock_weight
+            if "KOSPI" in market
+            else min(constraints.max_single_stock_weight, constraints.max_kosdaq_single_stock_weight)
+        )
+        sector = str(holding.get("sector", "Unclassified"))
+        current_weight = max(0.0, float(holding.get("current_weight", 0.0) or 0.0))
+        unscored_candidates[code] = (min(current_weight, cap), sector)
+
+    for sector in sorted({sector for _, sector in unscored_candidates.values()}):
+        sector_codes = [code for code, (_, name) in unscored_candidates.items() if name == sector]
+        sector_total = sum(unscored_candidates[code][0] for code in sector_codes)
+        scale = min(1.0, constraints.max_sector_weight / sector_total) if sector_total > 0 else 1.0
+        for code in sector_codes:
+            weight, name = unscored_candidates[code]
+            unscored_candidates[code] = (weight * scale, name)
+
+    unscored_total = sum(weight for weight, _ in unscored_candidates.values())
+    portfolio_scale = min(1.0, stock_budget / unscored_total) if unscored_total > 0 else 1.0
+    for code, (weight, sector) in unscored_candidates.items():
+        targets[code] = weight * portfolio_scale
+        sector_allocated[sector] = sector_allocated.get(sector, 0.0) + targets[code]
+
     for row in rows:
         cap, _ = _row_cap(row, holdings_by_code, constraints)
         if cap <= 0:
@@ -170,9 +214,9 @@ def optimize_target_weights(
             continue
         eligible.append((row, raw_score, cap))
 
-    investable_weight = max(0.0, 1.0 - constraints.cash_buffer)
+    reserved_weight = sum(targets.values())
+    investable_weight = max(0.0, stock_budget - reserved_weight)
     total_raw = sum(item[1] for item in eligible)
-    sector_allocated: dict[str, float] = {}
     for row, raw_score, cap in sorted(eligible, key=lambda item: item[1], reverse=True):
         desired = investable_weight * raw_score / total_raw if total_raw > 0 else 0.0
         sector_room = max(0.0, constraints.max_sector_weight - sector_allocated.get(row.sector, 0.0))
@@ -215,6 +259,44 @@ def _build_recommendations(
         alpha = alpha_map.get(code)
         holding = holdings_by_code.get(code, {})
         if alpha is None:
+            current_weight = _finite(holding.get("current_weight")) or 0.0
+            target_weight = max(0.0, targets.get(code, 0.0))
+            current_value = _finite(holding.get("current_value")) or total_portfolio_value * current_weight
+            target_value = total_portfolio_value * target_weight
+            action = "TRIM" if target_weight + constraints.min_trade_weight < current_weight else "HOLD"
+            meta = _meta(
+                source="Holdings input; forward alpha unavailable",
+                as_of_date=None,
+                fetched_at=fetched_at,
+                confidence=0,
+                stale=False,
+                missing=True,
+                fallback=fallback,
+                warnings=("alpha_data_unavailable",),
+            )
+            rows.append(
+                OptimizerRecommendationRow(
+                    code=code,
+                    name=str(holding.get("name", code) or code),
+                    sector=str(holding.get("sector", "Unclassified") or "Unclassified"),
+                    market=str(holding.get("market", "UNKNOWN") or "UNKNOWN"),
+                    current_weight=current_weight,
+                    target_weight=target_weight,
+                    weight_delta=target_weight - current_weight,
+                    current_value=current_value,
+                    target_value=target_value,
+                    trade_value_estimate=target_value - current_value,
+                    action=action,
+                    final_alpha_score=None,
+                    confidence_score=None,
+                    liquidity_score=None,
+                    transaction_cost_bps=12.0 if action == "TRIM" else 0.0,
+                    reasons=("현재 보유 비중과 포트폴리오 제약만 반영",),
+                    rejection_reasons=("미래 알파 데이터 부족",),
+                    risk_flags=("alpha_data_unavailable",),
+                    meta=meta,
+                )
+            )
             continue
         cap, cap_reasons = _row_cap(alpha, holdings_by_code, constraints)
         current_weight = _finite(holding.get("current_weight")) or 0.0
@@ -223,7 +305,8 @@ def _build_recommendations(
         current_value = _finite(holding.get("current_value")) or total_portfolio_value * current_weight
         target_value = total_portfolio_value * target_weight
         trade_value = target_value - current_value
-        rejection_reasons = list(cap_reasons)
+        informational_cap_reasons = [reason for reason in cap_reasons if reason.startswith("market unknown")]
+        rejection_reasons = [reason for reason in cap_reasons if reason not in informational_cap_reasons]
         if alpha.rating in {"HIGH_RISK_EXCLUDE", "AVOID"} and target_weight <= 0:
             rejection_reasons.append(alpha.rating.lower())
         if alpha.confidence_score < 45:
@@ -232,6 +315,7 @@ def _build_recommendations(
             rejection_reasons.append("stale data")
         action = action_from_delta(current_weight, target_weight, alpha.rating, rejection_reasons, constraints.min_trade_weight)
         reasons = list(alpha.positive_drivers[:3])
+        reasons.extend(informational_cap_reasons)
         if not reasons:
             reasons.append(f"alpha score {alpha.final_alpha_score}")
         warnings = tuple(alpha.risk_flags)
@@ -250,7 +334,7 @@ def _build_recommendations(
                 code=code,
                 name=alpha.name,
                 sector=alpha.sector,
-                market=str(holding.get("market", "KOSPI") or "KOSPI"),
+                market=str(holding.get("market") or alpha.market or "UNKNOWN"),
                 current_weight=current_weight,
                 target_weight=target_weight,
                 weight_delta=weight_delta,
@@ -409,6 +493,8 @@ def build_portfolio_optimizer_alert_center(
         now=now,
         fallback=fallback,
     )
+    target_stock_ratio = min(1.0, sum(max(0.0, row.target_weight) for row in recommendations))
+    target_cash_ratio = max(constraints.cash_buffer, 1.0 - target_stock_ratio)
     alerts = generate_portfolio_alerts(
         recommendations,
         cash_ratio=cash,
@@ -420,14 +506,15 @@ def build_portfolio_optimizer_alert_center(
     )
     stale = alpha_state.status == "stale" or any(row.meta.stale_data_flag for row in recommendations)
     missing = not recommendations
+    alpha_coverage_missing = bool(recommendations) and all(row.final_alpha_score is None for row in recommendations)
     fetched_at = _now_iso(now)
     meta = _meta(
         source="ForwardAlphaRankingPanel + holdings + alert rules",
         as_of_date=alpha_state.latest_source_at[:10] if alpha_state.latest_source_at else (now or datetime.now(timezone.utc)).date().isoformat(),
         fetched_at=fetched_at,
-        confidence=70 if fallback else 84,
+        confidence=0 if alpha_coverage_missing else 70 if fallback else 84,
         stale=stale,
-        missing=missing,
+        missing=missing or alpha_coverage_missing,
         fallback=fallback or alpha_state.status == "stale",
     )
     rejected = tuple(row for row in recommendations if row.action in {"AVOID", "EXCLUDE"} or row.rejection_reasons)
@@ -435,7 +522,7 @@ def build_portfolio_optimizer_alert_center(
         DataPoint("recommendation_count", "Recommendation Count", len(recommendations), meta, str(len(recommendations))),
         DataPoint("alert_count", "Alert Count", len(alerts), meta, str(len(alerts))),
         DataPoint("cash_ratio", "Cash Ratio", cash, meta, f"{cash * 100:.1f}%"),
-        DataPoint("target_cash_ratio", "Target Cash Ratio", constraints.cash_buffer, meta, f"{constraints.cash_buffer * 100:.1f}%"),
+        DataPoint("target_cash_ratio", "Target Cash Ratio", target_cash_ratio, meta, f"{target_cash_ratio * 100:.1f}%"),
     )
     status = "empty" if missing else "stale" if stale else "ready"
     summary = "Risk-controlled target weights and monitoring alerts are ready. No automatic order execution is implemented."
@@ -443,6 +530,8 @@ def build_portfolio_optimizer_alert_center(
         summary = "Optimizer excludes or avoids severe-risk candidates before assigning target weights."
     if fallback:
         summary = "Mock holdings and optimizer outputs are shown until real portfolio holdings are connected."
+    elif alpha_coverage_missing:
+        summary = "보유종목은 연결됐지만 미래 알파 데이터가 부족해 현재 비중과 위험 제약만 표시합니다."
     return PortfolioOptimizerAlertCenterState(
         module_id="PortfolioOptimizerAlertCenter",
         status=status,
@@ -454,7 +543,10 @@ def build_portfolio_optimizer_alert_center(
             "Targets respect max single-stock, KOSDAQ, sector, cash buffer, illiquidity, and severe-risk constraints.",
             "Recommendations are portfolio review actions only; no order placement API is created.",
         ),
-        risk_flags=tuple(["stale_optimizer_inputs"] if stale else []) + tuple(["optimizer_rejections_active"] if rejected else []) + tuple(["alerts_active"] if alerts else []),
+        risk_flags=tuple(["stale_optimizer_inputs"] if stale else [])
+        + tuple(["optimizer_alpha_coverage_missing"] if alpha_coverage_missing else [])
+        + tuple(["optimizer_rejections_active"] if rejected else [])
+        + tuple(["alerts_active"] if alerts else []),
         stale_after_minutes=24 * 60,
         recommendation_rows=recommendations,
         rejected_candidates=rejected,
@@ -462,7 +554,7 @@ def build_portfolio_optimizer_alert_center(
         stress_scenarios=_stress_scenarios(recommendations, now=now, fallback=fallback),
         total_portfolio_value=total_value,
         cash_ratio=cash,
-        target_cash_ratio=constraints.cash_buffer,
+        target_cash_ratio=target_cash_ratio,
         max_single_stock_weight=constraints.max_single_stock_weight,
         max_kosdaq_single_stock_weight=constraints.max_kosdaq_single_stock_weight,
         max_sector_weight=constraints.max_sector_weight,

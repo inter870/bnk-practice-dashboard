@@ -6,7 +6,12 @@ import unittest
 
 from src.institutional import (
     apply_high_risk_override,
+    build_dart_disclosure_catalyst_panel,
     build_forward_alpha_ranking_panel,
+    build_fundamental_quality_panel,
+    build_market_regime_macro_radar,
+    build_smart_money_flow_short_pressure_panel,
+    build_valuation_relative_cheapness_panel,
     calculate_confidence_score,
     calculate_final_alpha_score,
     forward_alpha_ranking_api_response,
@@ -93,6 +98,50 @@ class ForwardAlphaRankingPanelTests(unittest.TestCase):
             )
         )
 
+    def test_future_macro_state_is_excluded_from_ranking_features(self):
+        now = datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
+        future = "2026-08-08T12:00:00+00:00"
+        regime = build_market_regime_macro_radar(now=now, allow_mock=True)
+
+        def future_item(item):
+            return replace(
+                item,
+                meta=replace(
+                    item.meta,
+                    as_of_date="2026-08-08",
+                    available_at=future,
+                    fetched_at=future,
+                ),
+            )
+
+        future_regime = replace(
+            regime,
+            data_points=tuple(future_item(item) for item in regime.data_points),
+            macro_heatmap=tuple(future_item(item) for item in regime.macro_heatmap),
+            sector_tailwinds=tuple(future_item(item) for item in regime.sector_tailwinds),
+            recent_changes=tuple(
+                future_item(item) if getattr(item, "meta", None) is not None else item
+                for item in regime.recent_changes
+            ),
+            latest_source_at=future,
+        )
+        state = build_forward_alpha_ranking_panel(
+            valuation_state=build_valuation_relative_cheapness_panel(now=now, allow_mock=True),
+            quality_state=build_fundamental_quality_panel(now=now, allow_mock=True),
+            dart_state=build_dart_disclosure_catalyst_panel(now=now, allow_mock=True),
+            flow_state=build_smart_money_flow_short_pressure_panel(now=now, allow_mock=True),
+            regime_state=future_regime,
+            now=now,
+            allow_mock=False,
+        )
+
+        self.assertTrue(state.ranking_rows)
+        for row in state.ranking_rows:
+            self.assertIsNone(row.macro_score)
+            self.assertIn("future_macro_data_excluded", row.risk_flags)
+            self.assertIsNotNone(row.meta.available_at)
+            self.assertLessEqual(datetime.fromisoformat(row.meta.available_at), now)
+
     def test_deterministic_output_with_mock_features(self):
         now = datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
         first = build_forward_alpha_ranking_panel(now=now, allow_mock=True)
@@ -138,6 +187,21 @@ class ForwardAlphaRankingPanelTests(unittest.TestCase):
         self.assertIn("score_version", row)
         self.assertIn("feature_snapshot_id", row)
         self.assertIn("meta", row)
+
+    def test_panel_localizes_visible_alpha_drivers(self):
+        now = datetime(2026, 7, 8, 12, 0, tzinfo=timezone.utc)
+        state = build_forward_alpha_ranking_panel(now=now, allow_mock=True)
+        html = forward_alpha_ranking_panel_html(state)
+
+        self.assertIn("삼성전자", html)
+        self.assertIn("반도체", html)
+        self.assertIn("펀더멘털 품질 우수", html)
+        self.assertIn("긍정 공시 촉매", html)
+        self.assertIn("자사주 소각", html)
+        self.assertNotIn("Samsung Electronics", html)
+        self.assertNotIn("Semiconductors", html)
+        self.assertNotIn("high fundamental quality", html)
+        self.assertNotIn("positive DART catalyst", html)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .analytics import (
@@ -29,8 +30,12 @@ def rowsToHoldings(
         avg_price = float(row.get("avg_price") or 0)
         snap = snapshot.get(code)
         current_price = getattr(snap, "last_close", None) if snap is not None else None
-        if current_price in (None, 0):
-            current_price = avg_price
+        try:
+            current_price = float(current_price)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(current_price) or current_price <= 0:
+            continue
         sector = str(row.get("sector") or "미분류")
         holdings.append(
             Holding(
@@ -40,35 +45,41 @@ def rowsToHoldings(
                 asset_class="stocks",
                 quantity=qty,
                 average_cost=avg_price,
-                current_price=float(current_price),
+                current_price=current_price,
                 currency="KRW",
                 sector=sector,
                 country="KR",
                 benchmark_symbol="KS11",
             )
         )
-    return holdings
+    return holdings if len(holdings) == len(rows) else []
 
 
 def getHoldings(
     rows: list[dict[str, Any]] | None = None,
     snapshot: dict[str, Any] | None = None,
     code_to_name: dict[str, str] | None = None,
+    *,
+    allow_mock: bool = True,
 ) -> list[Holding]:
     holdings = rowsToHoldings(rows, snapshot, code_to_name)
-    return holdings if holdings else list(MOCK_HOLDINGS)
+    if rows:
+        return holdings
+    return holdings if holdings else (list(MOCK_HOLDINGS) if allow_mock else [])
 
 
-def getPortfolioSnapshots() -> list[PricePoint]:
-    return list(MOCK_PRICE_POINTS)
+def getPortfolioSnapshots(*, allow_mock: bool = True) -> list[PricePoint]:
+    return list(MOCK_PRICE_POINTS) if allow_mock else []
 
 
-def getBenchmarkSeries() -> list[PricePoint]:
+def getBenchmarkSeries(*, allow_mock: bool = True) -> list[PricePoint]:
+    if not allow_mock:
+        return []
     return [PricePoint(point.date, point.benchmark_value or 0.0) for point in MOCK_PRICE_POINTS if point.benchmark_value is not None]
 
 
-def getWatchlist() -> list[WatchlistItem]:
-    return list(WATCHLIST)
+def getWatchlist(*, allow_mock: bool = True) -> list[WatchlistItem]:
+    return list(WATCHLIST) if allow_mock else []
 
 
 def getPortfolioSummary(holdings: list[Holding]) -> dict[str, Any]:

@@ -34,6 +34,7 @@ from .models import (
     ValuationRelativeCheapnessPanelState,
 )
 from .dart_catalysts import (
+    adapt_open_dart_rows,
     build_dart_disclosure_catalyst_panel,
     calculate_dilution_risk_score,
     calculate_governance_risk_score,
@@ -174,6 +175,7 @@ __all__ = [
     "ValuationMetricRow",
     "ValuationRelativeCheapnessPanelState",
     "action_from_delta",
+    "adapt_open_dart_rows",
     "alert_center_api_response",
     "build_dart_disclosure_catalyst_panel",
     "build_data_trust_source_panel",

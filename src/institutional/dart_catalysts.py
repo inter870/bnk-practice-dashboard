@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from math import isfinite
-from typing import Any, Iterable
+import re
+from typing import Any, Iterable, Mapping
+from zoneinfo import ZoneInfo
 
 from .models import DARTDisclosureCatalystPanelState, DARTDisclosureEventRow, DataPoint, DataSourceMeta
 
@@ -33,6 +35,63 @@ NEGATIVE_CATEGORY_KEYWORDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 
 SHAREHOLDER_RETURN_CATEGORIES = {"share_buyback", "treasury_stock_cancellation", "dividend_increase", "value_up_plan"}
 DILUTION_CATEGORIES = {"paid_in_capital_increase", "cb_bw_eb_issuance", "dilution_risk"}
+
+
+def _open_dart_receipt_datetime(date_value: Any, time_value: Any = None) -> datetime | None:
+    date_text = str(date_value or "").strip()
+    digits = re.sub(r"\D", "", date_text)
+    try:
+        receipt_date = datetime.strptime(digits[:8], "%Y%m%d").date() if len(digits) >= 8 else datetime.fromisoformat(date_text).date()
+    except (TypeError, ValueError):
+        return None
+    time_match = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?::(\d{2}))?", str(time_value or ""))
+    if time_match:
+        hour, minute, second = (int(time_match.group(1)), int(time_match.group(2)), int(time_match.group(3) or 0))
+        receipt_time = time(hour=hour, minute=minute, second=second)
+    else:
+        # list.json exposes only a receipt date. End-of-day admission avoids
+        # treating a filing as tradable before its unknown intraday receipt time.
+        receipt_time = time(23, 59, 59)
+    return datetime.combine(receipt_date, receipt_time, tzinfo=ZoneInfo("Asia/Seoul"))
+
+
+def adapt_open_dart_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    source: str,
+    fetched_at: str | None,
+    is_fallback: bool,
+) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        receipt_at = _open_dart_receipt_datetime(
+            row.get("date") or row.get("receipt_date") or row.get("rcept_dt"),
+            row.get("time"),
+        )
+        if receipt_at is None:
+            continue
+        stock_digits = re.sub(r"\D", "", str(row.get("stock_code") or row.get("code") or ""))
+        code = stock_digits.zfill(6) if 0 < len(stock_digits) <= 6 else "N/A"
+        source_url = str(row.get("report_url") or row.get("source_url") or "").strip()
+        receipt_match = re.search(r"(?:rcpNo=|rcept_no=)(\d+)", source_url, flags=re.IGNORECASE)
+        receipt_no = str(row.get("receipt_no") or row.get("rcept_no") or "").strip()
+        if not receipt_no and receipt_match:
+            receipt_no = receipt_match.group(1)
+        events.append(
+            {
+                "receipt_no": receipt_no or source_url or "N/A",
+                "code": code,
+                "name": str(row.get("corp_name") or row.get("name") or "종목 미확인"),
+                "title": str(row.get("report_name") or row.get("title") or "공시"),
+                "receipt_date": receipt_at.date().isoformat(),
+                "available_at": receipt_at.isoformat(),
+                "source_url": source_url,
+                "source": source,
+                "fetched_at": fetched_at,
+                "is_fallback": bool(is_fallback),
+            }
+        )
+    return events
 GOVERNANCE_RISK_CATEGORIES = {"audit_issue", "litigation", "embezzlement_breach_of_trust", "trading_halt", "administrative_issue", "delisting_risk"}
 
 MOCK_DART_DISCLOSURES: tuple[dict[str, Any], ...] = (
@@ -379,7 +438,7 @@ def _build_rows(
     fallback: bool,
 ) -> tuple[DARTDisclosureEventRow, ...]:
     rows: list[DARTDisclosureEventRow] = []
-    fetched_at = _now_iso(now)
+    default_fetched_at = _now_iso(now)
     for event in select_point_in_time_disclosures(events, now):
         classified = classify_disclosure_event(event)
         category = str(classified["category"])
@@ -394,6 +453,8 @@ def _build_rows(
         reference = str(_get(event, "receipt_no", "rcp_no", "rcept_no", default="") or "") or source_url
         missing = not bool(reference)
         stale = _is_stale(available_at, now=now, stale_after_hours=stale_after_hours)
+        event_fetched_at = _as_datetime(_get(event, "fetched_at", "fetchedAt"))
+        fetched_at = _now_iso(event_fetched_at) if event_fetched_at is not None else default_fetched_at
         confidence = 72 if fallback else 88
         if missing:
             confidence -= 20
@@ -412,10 +473,12 @@ def _build_rows(
             is_fallback=bool(fallback or _get(event, "is_fallback", default=False)),
             warnings=tuple(["unclassified_disclosure"] if category == "other" else []),
         )
+        raw_code = str(_get(event, "code", "stock_code", "stockCode", default="") or "").strip()
+        normalized_code = raw_code.zfill(6) if raw_code.isdigit() and len(raw_code) <= 6 else "N/A"
         rows.append(
             DARTDisclosureEventRow(
                 receipt_no=str(_get(event, "receipt_no", "rcp_no", "rcept_no", default=reference or "N/A") or "N/A"),
-                code=str(_get(event, "code", "stock_code", "stockCode", default="N/A") or "N/A").zfill(6),
+                code=normalized_code,
                 name=str(_get(event, "name", "corp_name", "corpName", default="Unknown") or "Unknown"),
                 title=str(_get(event, "title", "report_name", "reportName", default="Disclosure event") or "Disclosure event"),
                 category=category,

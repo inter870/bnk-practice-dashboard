@@ -6,7 +6,7 @@ services:
     autoDeploy: true
     healthCheckPath: /_stcore/health
     envVars:
-      - key: BNK_VERIFY_SSL
+      - key: SHOW_MOCK_DATA
         value: "false"
       - key: DART_API_KEY
         sync: false

@@ -125,6 +125,36 @@ class FundamentalQualityPanelTests(unittest.TestCase):
         selected = select_point_in_time_periods(periods, cutoff)
         self.assertEqual([row["period"] for row in selected], ["2025Q3"])
 
+    def test_receipt_timestamp_precision_is_preserved(self):
+        now = datetime(2026, 5, 16, tzinfo=timezone.utc)
+        state = build_fundamental_quality_panel(
+            financial_inputs=[
+                {
+                    "code": "005930",
+                    "name": "삼성전자",
+                    "sector": "반도체",
+                    "periods": [
+                        {
+                            "period": "2026Q1",
+                            "available_at": "2026-05-15T18:00:00+09:00",
+                            "revenue": 100,
+                            "operating_income": 10,
+                            "net_income": 8,
+                            "cfo": 9,
+                            "total_assets": 200,
+                        }
+                    ],
+                }
+            ],
+            now=now,
+            allow_mock=False,
+        )
+
+        row = state.quality_rows[0]
+        self.assertEqual(row.available_at, "2026-05-15T18:00:00+09:00")
+        self.assertEqual(row.meta.available_at, "2026-05-15T18:00:00+09:00")
+        self.assertEqual(row.meta.as_of_date, "2026-05-15")
+
     def test_panel_renders_loading_empty_error_and_stale_states(self):
         now = datetime(2026, 7, 8, tzinfo=timezone.utc)
         empty_state = build_fundamental_quality_panel(allow_mock=False, now=now)

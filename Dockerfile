@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -15,7 +15,12 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
 COPY . .
-RUN mkdir -p data briefings
+RUN groupadd --system stance \
+    && useradd --system --gid stance --home-dir /app stance \
+    && mkdir -p data briefings \
+    && chown -R stance:stance /app
+
+USER stance
 
 EXPOSE 8501
 

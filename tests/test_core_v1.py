@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock, patch
 
 import pandas as pd
 
@@ -6,6 +7,27 @@ import app
 
 
 class CoreV1Tests(unittest.TestCase):
+    def test_all_nine_legacy_views_are_preserved_in_order(self):
+        self.assertEqual(
+            app.MAIN_VIEW_LABELS,
+            (
+                "대시보드",
+                "포트폴리오",
+                "종목",
+                "알파 후보 탐색",
+                "공시",
+                "매크로",
+                "브리핑",
+                "신호 성과",
+                "설정",
+            ),
+        )
+
+    def test_integer_slider_value_is_aligned_to_step(self):
+        self.assertEqual(app.align_int_step(220, 50, 1000, 50), 200)
+        self.assertEqual(app.align_int_step(1050, 50, 1000, 50), 1000)
+        self.assertEqual(app.align_int_step(None, 50, 1000, 50), 50)
+
     def test_data_quality_penalizes_missing_source(self):
         score, warnings, errors = app.assess_data_quality(
             source="unknown",
@@ -34,6 +56,21 @@ class CoreV1Tests(unittest.TestCase):
         self.assertIn(regime.regime, {"Extreme Risk-Off", "Risk-Off"})
         self.assertLess(regime.max_new_exposure, 0.40)
 
+    def test_ecos_latest_observation_uses_parsed_max_not_first_row(self):
+        frame = pd.DataFrame(
+            [
+                {"TIME": "202401"},
+                {"TIME": "invalid"},
+                {"TIME": "2026Q2"},
+                {"TIME": "20251231"},
+            ]
+        )
+
+        latest = app.latest_ecos_observation_timestamp(frame)
+
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.date().isoformat(), "2026-06-30")
+
     def test_risk_reward_handles_valid_history(self):
         idx = pd.date_range("2024-01-01", periods=80)
         close = pd.Series(range(100, 180), index=idx)
@@ -58,6 +95,48 @@ class CoreV1Tests(unittest.TestCase):
         self.assertEqual(decision.max_position_pct, 0.0 if "공시" in " ".join(decision.blockers) else decision.max_position_pct)
         self.assertLessEqual(decision.score, 64)
 
+    def test_expected_edge_requires_out_of_sample_calibration(self):
+        regime = app.MarketRegimeOutput(60, "Neutral", (20, 40), 0.4, [], [], [], 75, {})
+        plan = {"risk_pct": 5.0, "upside_pct": 12.0, "rr": 2.4}
+
+        edge, adjusted_rr, confidence = app.expected_edge_from_plan(
+            plan,
+            80,
+            regime,
+            {"severity": "Low", "penalty": 0},
+        )
+        decision = app.build_action_decision(
+            80,
+            plan,
+            regime,
+            90,
+            {"severity": "Low", "penalty": 0},
+        )
+
+        self.assertIsNone(edge)
+        self.assertIsNone(adjusted_rr)
+        self.assertEqual(confidence, 0.0)
+        self.assertIn("검증된 승률 데이터 부족", decision.blockers)
+        self.assertEqual(decision.max_position_pct, 0.0)
+
+    def test_expected_edge_accepts_explicit_calibrated_probability(self):
+        regime = app.MarketRegimeOutput(60, "Neutral", (20, 40), 0.4, [], [], [], 75, {})
+        plan = {"risk_pct": 5.0, "upside_pct": 12.0, "rr": 2.4}
+
+        edge, adjusted_rr, confidence = app.expected_edge_from_plan(
+            plan,
+            80,
+            regime,
+            {"severity": "Low", "penalty": 0},
+            calibrated_win_probability=0.60,
+            calibration_confidence=72.0,
+            calibration_sample_size=80,
+        )
+
+        self.assertIsNotNone(edge)
+        self.assertIsNotNone(adjusted_rr)
+        self.assertEqual(confidence, 72.0)
+
     def test_briefing_validator_catches_duplicate_text(self):
         schema = "## A\n## B\n## C\n## D\n## E"
         text = "\n".join(
@@ -78,13 +157,49 @@ class CoreV1Tests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(any("중복" in err for err in errors))
 
+    def test_saved_discovery_result_is_reusable_after_request_flag_resets(self):
+        saved = (220, [{"code": "005930", "name": "삼성전자"}], ["warning"], 2500, 220)
+
+        normalized = app.saved_discovery_scan_result(saved)
+
+        self.assertIsNotNone(normalized)
+        self.assertEqual(normalized[1][0]["code"], "005930")
+
     def test_kis_provider_disabled_without_credentials(self):
-        if app.KIS_APP_KEY and app.KIS_APP_SECRET:
-            self.skipTest("KIS credentials configured in this environment")
-        self.assertFalse(app.kis_enabled())
-        token, error = app.get_kis_access_token(0)
-        self.assertIsNone(token)
-        self.assertIn("KIS_APP_KEY", error)
+        app._get_kis_access_token_cached.clear()
+        try:
+            with patch.object(app, "KIS_APP_KEY", ""), patch.object(app, "KIS_APP_SECRET", ""):
+                self.assertFalse(app.kis_enabled())
+                token, error = app.get_kis_access_token(0)
+                self.assertIsNone(token)
+                self.assertIn("KIS_APP_KEY", error)
+        finally:
+            app._get_kis_access_token_cached.clear()
+
+    def test_kis_transient_token_failure_is_not_cached(self):
+        success = Mock()
+        success.content = b"{}"
+        success.status_code = 200
+        success.reason = "OK"
+        success.json.return_value = {"access_token": "test-access-token"}
+        app._get_kis_access_token_cached.clear()
+        try:
+            with (
+                patch.object(app, "KIS_APP_KEY", "test-app-key"),
+                patch.object(app, "KIS_APP_SECRET", "test-app-secret"),
+                patch.object(app, "KIS_BASE_URL", "https://example.invalid"),
+                patch.object(app.requests, "post", side_effect=[app.requests.ConnectionError("temporary"), success]) as post,
+            ):
+                first_token, first_error = app.get_kis_access_token(0)
+                second_token, second_error = app.get_kis_access_token(1)
+        finally:
+            app._get_kis_access_token_cached.clear()
+
+        self.assertIsNone(first_token)
+        self.assertIn("요청 실패", first_error)
+        self.assertEqual(second_token, "test-access-token")
+        self.assertIsNone(second_error)
+        self.assertEqual(post.call_count, 2)
 
     def test_core_market_card_labels_historical_fdr_as_recent_close(self):
         snap = app.Snapshot(

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import html
-import importlib
 import io
 import json
 from datetime import datetime, timedelta
@@ -13,11 +12,11 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 import requests
-import urllib3
 
 try:
     import streamlit as st
@@ -51,16 +50,21 @@ from src.discovery import build_universe, scan_universe
 from src.execution import build_execution_plan, should_block_for_execution
 from src.exits import build_exit_plan
 from src.monitoring.signal_ledger import (
-    compute_forward_outcome,
+    compute_forward_outcomes,
     create_signal_record,
     get_kill_switch_state,
     init_db,
     list_recent_signals,
     SignalRecord,
+    signal_record_from_mapping,
     store_outcome,
     store_signal,
 )
+from src.market_snapshot import Snapshot
 from src.portfolio import (
+    PricePoint,
+    adapt_legacy_csv_rows,
+    calculate_portfolio_risk_contributions,
     calculateAllocationDrift,
     calculateAnnualizedVolatility,
     calculateBenchmarkRelativeReturn,
@@ -81,6 +85,7 @@ from src.portfolio import (
     getPortfolioSnapshots,
     getPortfolioSummary,
     getWatchlist,
+    reconstruct_portfolio_value_history,
 )
 from src.korea_equity.formatting import (
     candleSummaryText as korea_candle_summary_text,
@@ -110,6 +115,7 @@ from src.korea_equity.service import (
 from src.korea_equity.explanations import explanation_for_factor, get_metric_explanation
 from src.korea_equity.design_tokens import KOREA_DASHBOARD_VISIBILITY_CSS, KOREA_MODULE_VISUAL_REGISTRY
 from src.korea_equity.interaction import (
+    CONTEXT_QUERY_KEYS,
     FACTOR_TO_METRIC,
     MODULE_DEFAULT_METRIC,
     MODULE_IDS,
@@ -125,6 +131,7 @@ from src.korea_equity.interaction import (
 )
 from src.institutional import (
     PortfolioRiskThresholds,
+    adapt_open_dart_rows,
     build_data_trust_source_panel,
     build_dart_disclosure_catalyst_panel,
     build_forward_alpha_ranking_panel,
@@ -148,26 +155,6 @@ from src.institutional import (
 )
 from src.ui.korea_os_theme import inject_korea_os_theme
 from src.ui.korean_market_colors import getChartSeriesColor, getKoreanMarketColorToken
-import src.institutional.market_regime as institutional_market_regime_module
-import src.institutional.ui as institutional_ui_module
-import src.ui.korea_os_theme as korea_os_theme_module
-
-
-institutional_market_regime_module = importlib.reload(institutional_market_regime_module)
-institutional_ui_module = importlib.reload(institutional_ui_module)
-korea_os_theme_module = importlib.reload(korea_os_theme_module)
-build_market_regime_macro_radar = institutional_market_regime_module.build_market_regime_macro_radar
-dart_disclosure_catalyst_panel_html = institutional_ui_module.dart_disclosure_catalyst_panel_html
-data_trust_source_panel_html = institutional_ui_module.data_trust_source_panel_html
-forward_alpha_ranking_panel_html = institutional_ui_module.forward_alpha_ranking_panel_html
-fundamental_quality_panel_html = institutional_ui_module.fundamental_quality_panel_html
-krw_rates_fx_dashboard_html = institutional_ui_module.krw_rates_fx_dashboard_html
-market_regime_macro_radar_html = institutional_ui_module.market_regime_macro_radar_html
-portfolio_optimizer_alert_center_html = institutional_ui_module.portfolio_optimizer_alert_center_html
-portfolio_risk_cockpit_html = institutional_ui_module.portfolio_risk_cockpit_html
-smart_money_flow_short_pressure_panel_html = institutional_ui_module.smart_money_flow_short_pressure_panel_html
-valuation_relative_cheapness_panel_html = institutional_ui_module.valuation_relative_cheapness_panel_html
-inject_korea_os_theme = korea_os_theme_module.inject_korea_os_theme
 
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -183,27 +170,79 @@ def config_value(key: str, default: str = "") -> str:
     return value if value not in (None, "") else default
 
 
-HTTP_VERIFY_SSL = config_value("BNK_VERIFY_SSL", "false").strip().lower() in {"1", "true", "yes", "on"}
+def config_bool(key: str, default: bool = False) -> bool:
+    fallback = "true" if default else "false"
+    return config_value(key, fallback).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def config_positive_int(key: str, default: int) -> int:
+    try:
+        return max(1, int(float(config_value(key, str(default)))))
+    except (TypeError, ValueError):
+        return default
+
+
+SHOW_MOCK_DATA = config_bool("SHOW_MOCK_DATA", config_bool("DEMO_MODE", False))
+HTTP_VERIFY_SSL = True
+HTTP_CA_BUNDLE = config_value("BNK_CA_BUNDLE", config_value("REQUESTS_CA_BUNDLE", "")).strip()
+KST = ZoneInfo("Asia/Seoul")
+
+
+def mock_data_enabled() -> bool:
+    try:
+        return bool(
+            st.session_state.get(
+                "demo_mode_preference",
+                st.session_state.get("demo_mode_enabled", SHOW_MOCK_DATA),
+            )
+        )
+    except Exception:
+        return SHOW_MOCK_DATA
+
+
+def persist_demo_mode_preference() -> None:
+    """Keep the setting when Streamlit removes an unmounted widget key."""
+    st.session_state.demo_mode_preference = bool(
+        st.session_state.get("demo_mode_enabled", SHOW_MOCK_DATA)
+    )
 
 
 def configure_http_ssl() -> None:
-    if HTTP_VERIFY_SSL:
-        return
-    if getattr(requests.sessions.Session.request, "_bnk_ssl_configured", False):
-        return
-
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    original_request = requests.sessions.Session.request
-
-    def request_with_default_ssl(self: requests.Session, method: str, url: str, **kwargs: Any) -> requests.Response:
-        kwargs.setdefault("verify", False)
-        return original_request(self, method, url, **kwargs)
-
-    request_with_default_ssl._bnk_ssl_configured = True
-    requests.sessions.Session.request = request_with_default_ssl
+    """Keep TLS verification enabled and optionally use an explicit CA bundle."""
+    if HTTP_CA_BUNDLE and "REQUESTS_CA_BUNDLE" not in os.environ:
+        os.environ["REQUESTS_CA_BUNDLE"] = HTTP_CA_BUNDLE
 
 
 configure_http_ssl()
+
+
+def now_kst() -> datetime:
+    return datetime.now(KST)
+
+
+def format_kst_datetime(value: Any, fallback: str = "확인 불가") -> str:
+    if value in (None, ""):
+        return fallback
+    try:
+        stamp = pd.Timestamp(value)
+        if stamp.tzinfo is None:
+            stamp = stamp.tz_localize(KST)
+        else:
+            stamp = stamp.tz_convert(KST)
+        return stamp.strftime("%Y.%m.%d %H:%M")
+    except Exception:
+        return fallback
+
+
+def acquire_session_cooldown(key: str, seconds: int) -> tuple[bool, int]:
+    """Reserve a rate-limited user action without exposing cross-user state."""
+    now_value = now_kst().timestamp()
+    last_value = safe_float(st.session_state.get(key)) or 0.0
+    remaining = max(0, int(math.ceil(seconds - (now_value - last_value))))
+    if remaining > 0:
+        return False, remaining
+    st.session_state[key] = now_value
+    return True, 0
 
 
 DART_API_KEY = get_dart_api_key() or ""
@@ -213,6 +252,8 @@ ECOS_API_URL = "https://ecos.bok.or.kr/api/KeyStatisticList"
 OPENAI_API_KEY = config_value("OPENAI_API_KEY", "")
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENAI_BRIEFING_MODEL = "gpt-5.5"
+DATA_REFRESH_COOLDOWN_SECONDS = config_positive_int("DATA_REFRESH_COOLDOWN_SECONDS", 15)
+GPT_GENERATION_COOLDOWN_SECONDS = config_positive_int("GPT_GENERATION_COOLDOWN_SECONDS", 60)
 KIS_APP_KEY = config_value("KIS_APP_KEY", "")
 KIS_APP_SECRET = config_value("KIS_APP_SECRET", "")
 KIS_BASE_URL = config_value("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443").rstrip("/")
@@ -2472,25 +2513,6 @@ RISK_DEFAULTS = {
 
 
 @dataclass
-class Snapshot:
-    key: str
-    display_name: str
-    last_close: float | None
-    prev_close: float | None
-    change: float | None
-    change_pct: float | None
-    asof: pd.Timestamp | None
-    raw: pd.DataFrame | None = None
-    source: str = "unknown"
-    unit: str = "unknown"
-    frequency: str = "unknown"
-    quality_score: int = 0
-    warnings: list[str] | None = None
-    errors: list[str] | None = None
-    is_fallback: bool = True
-
-
-@dataclass
 class MarketRegimeOutput:
     score: int
     regime: str
@@ -2726,6 +2748,7 @@ REGIME_LABELS_KO = {
     "Neutral": "중립",
     "Risk-On": "공격 가능",
     "Euphoria": "과열",
+    "Euphoric": "과열",
 }
 
 
@@ -2879,10 +2902,21 @@ def kis_enabled() -> bool:
     return bool(KIS_APP_KEY and KIS_APP_SECRET and KIS_BASE_URL)
 
 
-@st.cache_data(ttl=60 * 60, show_spinner=False)
-def get_kis_access_token(refresh_token: int) -> tuple[str | None, str | None]:
+class KISAccessTokenError(RuntimeError):
+    pass
+
+
+def kis_credential_fingerprint() -> str:
     if not kis_enabled():
-        return None, "KIS_APP_KEY/KIS_APP_SECRET 미설정"
+        return "kis-disabled"
+    material = f"{KIS_BASE_URL}\0{KIS_APP_KEY}\0{KIS_APP_SECRET}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:16]
+
+
+@st.cache_data(ttl=60 * 60, max_entries=8, show_spinner=False)
+def _get_kis_access_token_cached(credential_fingerprint: str) -> str:
+    if not kis_enabled():
+        raise KISAccessTokenError("KIS_APP_KEY/KIS_APP_SECRET 미설정")
     try:
         response = requests.post(
             f"{KIS_BASE_URL}/oauth2/tokenP",
@@ -2897,13 +2931,24 @@ def get_kis_access_token(refresh_token: int) -> tuple[str | None, str | None]:
         payload = response.json() if response.content else {}
         if response.status_code >= 400:
             message = payload.get("msg1") or payload.get("error_description") or response.reason
-            return None, f"KIS token 응답 오류: {message}"
+            raise KISAccessTokenError(f"KIS token 응답 오류: {message}")
         token = payload.get("access_token")
         if not token:
-            return None, "KIS token 응답에 access_token 없음"
-        return str(token), None
+            raise KISAccessTokenError("KIS token 응답에 access_token 없음")
+        return str(token)
+    except KISAccessTokenError:
+        raise
     except Exception as exc:
-        return None, f"KIS token 요청 실패: {exc}"
+        raise KISAccessTokenError(f"KIS token 요청 실패: {sanitize_secret_text(str(exc))}") from exc
+
+
+def get_kis_access_token(_refresh_token: int) -> tuple[str | None, str | None]:
+    if not kis_enabled():
+        return None, "KIS_APP_KEY/KIS_APP_SECRET 미설정"
+    try:
+        return _get_kis_access_token_cached(kis_credential_fingerprint()), None
+    except KISAccessTokenError as exc:
+        return None, sanitize_secret_text(str(exc))
 
 
 def fetch_kis_stock_snapshot(code: str, display_name: str, refresh_token: int) -> Snapshot | None:
@@ -3115,7 +3160,7 @@ def fetch_naver_yield_snapshot(marketindex_cd: str, key: str, display_name: str)
         return None
 
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=20, max_entries=32, show_spinner=False)
 def load_live_market_snapshot(refresh_token: int) -> dict[str, Snapshot]:
     data: dict[str, Snapshot] = {}
 
@@ -3155,7 +3200,7 @@ def choose_candidate(candidates: Iterable[str], start: str | None = None, end: s
     return None, None
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, max_entries=8, show_spinner=False)
 def load_listing_cache(refresh_token: int) -> pd.DataFrame:
     if fdr is None:
         return pd.DataFrame(columns=["Code", "Name"])
@@ -3168,7 +3213,7 @@ def load_listing_cache(refresh_token: int) -> pd.DataFrame:
     return listing
 
 
-@st.cache_data(ttl=20, show_spinner=False)
+@st.cache_data(ttl=20, max_entries=64, show_spinner=False)
 def load_market_snapshot(refresh_token: int, watch_codes: tuple[str, ...] = ()) -> dict[str, Snapshot]:
     if fdr is None:
         return {}
@@ -3266,13 +3311,34 @@ def load_market_snapshot(refresh_token: int, watch_codes: tuple[str, ...] = ()) 
     return data
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=180, max_entries=24, show_spinner=False)
 def load_recent_disclosures(refresh_token: int, api_token: str, limit: int = 150) -> pd.DataFrame:
     columns = ["time", "corp_name", "report_name", "submitter", "date", "note", "corp_code", "stock_code", "report_url"]
 
-    def empty_frame() -> pd.DataFrame:
-        return pd.DataFrame(columns=columns)
+    def with_status(
+        frame: pd.DataFrame,
+        *,
+        status: str,
+        source: str,
+        is_fallback: bool,
+        error_code: str | None = None,
+    ) -> pd.DataFrame:
+        frame.attrs.update(
+            {
+                "provider_status": status,
+                "source": source,
+                "is_fallback": is_fallback,
+                "error_code": error_code,
+                "fetched_at": now_kst().isoformat(timespec="seconds"),
+                "usable_data": not frame.empty,
+            }
+        )
+        return frame
 
+    def empty_frame(status: str = "empty", source: str = "OpenDART", error_code: str | None = None) -> pd.DataFrame:
+        return with_status(pd.DataFrame(columns=columns), status=status, source=source, is_fallback=False, error_code=error_code)
+
+    api_error_code: str | None = "missing_key" if not DART_API_KEY else None
     if DART_API_KEY:
         try:
             rows: list[dict[str, Any]] = []
@@ -3295,6 +3361,7 @@ def load_recent_disclosures(refresh_token: int, api_token: str, limit: int = 150
                 response.raise_for_status()
                 payload = response.json()
                 if payload.get("status") != "000":
+                    api_error_code = f"api_status_{clean_text(payload.get('status', 'unknown'))}"
                     break
                 items = payload.get("list") or []
                 if not items:
@@ -3325,16 +3392,23 @@ def load_recent_disclosures(refresh_token: int, api_token: str, limit: int = 150
                         break
                 page_no += 1
             if rows:
-                return pd.DataFrame(rows, columns=columns)
-        except Exception:
-            pass
+                return with_status(
+                    pd.DataFrame(rows, columns=columns),
+                    status="ready",
+                    source="OpenDART list.json",
+                    is_fallback=False,
+                )
+            api_error_code = api_error_code or "empty_response"
+        except Exception as exc:
+            safe_error = sanitize_secret_text(str(exc)).lower()
+            api_error_code = "tls_error" if "ssl" in safe_error or "certificate" in safe_error else "request_error"
 
     try:
         html = requests.get(DART_RECENT_URL, headers=NAVER_HEADERS, timeout=12).text
         soup = BeautifulSoup(html, "html.parser")
         table = soup.find("table")
         if table is None:
-            return empty_frame()
+            return empty_frame("error", "DART 최근공시 공개 페이지", api_error_code or "table_missing")
 
         rows: list[dict[str, Any]] = []
         for tr in table.find_all("tr")[1:]:
@@ -3370,12 +3444,19 @@ def load_recent_disclosures(refresh_token: int, api_token: str, limit: int = 150
             )
             if len(rows) >= limit:
                 break
-        return pd.DataFrame(rows, columns=columns)
+        fallback = pd.DataFrame(rows, columns=columns)
+        return with_status(
+            fallback,
+            status="fallback" if not fallback.empty else "empty",
+            source="DART 최근공시 공개 페이지",
+            is_fallback=True,
+            error_code=api_error_code,
+        )
     except Exception:
-        return empty_frame()
+        return empty_frame("error", "DART 최근공시 공개 페이지", api_error_code or "fallback_request_error")
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=300, max_entries=512, show_spinner=False)
 def load_symbol_history(symbol: str, refresh_token: int, periods: int = 220) -> pd.DataFrame:
     if fdr is None:
         return pd.DataFrame()
@@ -3392,7 +3473,7 @@ def load_symbol_history(symbol: str, refresh_token: int, periods: int = 220) -> 
     return df.sort_index()
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, max_entries=4, show_spinner=False)
 def run_alpha_discovery_scan(refresh_token: int, max_symbols: int = 220) -> tuple[list[dict[str, Any]], list[str], int, int]:
     listing = load_listing_cache(refresh_token)
     universe, universe_warnings = build_universe(listing)
@@ -3541,12 +3622,12 @@ def stock_signal(
             return
         delta = max(min(value, 25.0), -25.0) / 25.0 * weight
         score += delta
-        direction = "positive" if value >= threshold else "negative"
+        direction = "긍정" if value >= threshold else "부정"
         reasons.append(f"{label} {direction}({value:+.2f}%)")
 
-    add_weight(ret["5d"], 7.5, "5D trend")
-    add_weight(ret["20d"], 12.0, "20D trend")
-    add_weight(ret["60d"], 9.0, "60D trend")
+    add_weight(ret["5d"], 7.5, "5일 추세")
+    add_weight(ret["20d"], 12.0, "20일 추세")
+    add_weight(ret["60d"], 9.0, "60일 추세")
 
     if len(close) >= 20:
         ma5 = float(close.tail(5).mean())
@@ -3554,16 +3635,16 @@ def stock_signal(
         last = float(close.iloc[-1])
         if last > ma5:
             score += 4.0
-            reasons.append("close above 5D average")
+            reasons.append("종가가 5일선 상회")
         else:
             score -= 3.0
-            reasons.append("close below 5D average")
+            reasons.append("종가가 5일선 하회")
         if last > ma20:
             score += 6.0
-            reasons.append("close above 20D average")
+            reasons.append("종가가 20일선 상회")
         else:
             score -= 5.0
-            reasons.append("close below 20D average")
+            reasons.append("종가가 20일선 하회")
 
     if volume is not None and len(volume) >= 20:
         vol_avg = volume.tail(20).mean()
@@ -3571,32 +3652,32 @@ def stock_signal(
         if vol_ratio is not None:
             if vol_ratio >= 1.2:
                 score += 6.0
-                reasons.append(f"volume confirmation({vol_ratio:.2f}x)")
+                reasons.append(f"거래량 확인({vol_ratio:.2f}배)")
             elif vol_ratio <= 0.85:
                 score -= 2.5
-                reasons.append(f"volume weak({vol_ratio:.2f}x)")
+                reasons.append(f"거래량 약화({vol_ratio:.2f}배)")
 
     if kospi_close is not None and len(close) >= 21 and len(kospi_close) >= 21:
         rs = relative_strength(close, kospi_close)
         if rs is not None:
             score += max(min(rs, 15.0), -15.0) / 15.0 * 10.0
-            reasons.append(f"relative strength vs KOSPI {rs:+.2f}%p")
+            reasons.append(f"KOSPI 대비 상대강도 {rs:+.2f}%p")
 
     if len(close) >= 20:
         recent = close.tail(20)
         vol = float(recent.pct_change().dropna().std() * math.sqrt(252) * 100)
         if vol >= 80:
             score -= 4.0
-            reasons.append(f"high volatility({vol:.1f}%)")
+            reasons.append(f"높은 변동성({vol:.1f}%)")
         elif vol <= 35:
             score += 2.0
-            reasons.append(f"stable volatility({vol:.1f}%)")
+            reasons.append(f"안정적 변동성({vol:.1f}%)")
 
     score += market_score * 2.0
     if market_score > 0:
-        reasons.append("market pressure positive")
+        reasons.append("시장 압력 긍정")
     elif market_score < 0:
-        reasons.append("market pressure negative")
+        reasons.append("시장 압력 부정")
 
     score = float(max(0.0, min(100.0, score)))
     if score >= 60:
@@ -3608,14 +3689,14 @@ def stock_signal(
     return label, score, reasons[:6]
 def coach_message(market_score: float, signal: str, stock_score: float, volatility_flag: str) -> str:
     if market_score >= 1.0 and signal == "Buy":
-        return "Trend is supportive. Prefer staged review with clear risk limits."
+        return "추세가 우호적입니다. 명확한 위험 한도 안에서 단계적으로 검토하세요."
     if market_score <= -1.0 and signal == "Sell":
-        return "Defense comes first. Keep cash and review exits before new exposure."
+        return "방어가 우선입니다. 신규 노출 전 현금과 청산 조건을 먼저 점검하세요."
     if volatility_flag == "high":
-        return "Volatility is elevated. Reduce size and keep stop rules strict."
+        return "변동성이 높습니다. 검토 비중을 낮추고 손절 규칙을 엄격히 유지하세요."
     if stock_score >= 50:
-        return "The setup is acceptable, but wait for price and disclosure confirmation."
-    return "Market and stock signals are weak. Observation is preferable."
+        return "조건은 양호하지만 가격과 공시 확인 전에는 관찰을 우선하세요."
+    return "시장과 종목 신호가 약합니다. 신규 노출보다 관찰이 적절합니다."
 def render_card(
     title: str,
     snap: Snapshot,
@@ -3666,7 +3747,7 @@ def fear_greed_label(score: float | None) -> tuple[str, str]:
     return "극단 탐욕", "#16a34a"
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=900, max_entries=8, show_spinner=False)
 def load_fear_greed_index(refresh_token: int) -> Snapshot | None:
     try:
         response = requests.get("https://api.alternative.me/fng/?limit=1&format=json", headers=NAVER_HEADERS, timeout=12)
@@ -3699,7 +3780,7 @@ def load_fear_greed_index(refresh_token: int) -> Snapshot | None:
         return None
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=900, max_entries=8, show_spinner=False)
 def load_fear_greed_history(refresh_token: int, limit: int = 8) -> dict[str, Any]:
     try:
         response = requests.get(
@@ -4041,7 +4122,16 @@ def render_gpt_briefing_section(
     if prompt_error:
         st.error(prompt_error)
 
+    generation_allowed = False
     if generate_clicked and not prompt_error:
+        generation_allowed, remaining = acquire_session_cooldown(
+            "briefing_generation_last_at",
+            GPT_GENERATION_COOLDOWN_SECONDS,
+        )
+        if not generation_allowed:
+            st.warning(f"중복 API 호출을 막기 위해 {remaining}초 후 다시 생성할 수 있습니다.")
+
+    if generate_clicked and not prompt_error and generation_allowed:
         with st.spinner("생성 중..."):
             try:
                 user_text, missing_items = build_briefing_user_prompt(snapshot, valid_rows, refresh_token, ref_date)
@@ -4169,10 +4259,23 @@ def _ecos_best_match(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
     return matched
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=1800, max_entries=8, show_spinner=False)
 def load_ecos_key_statistics(refresh_token: int, ecos_key: str) -> tuple[pd.DataFrame, str | None]:
+    def ecos_frame(status: str, error_code: str | None = None) -> pd.DataFrame:
+        frame = pd.DataFrame()
+        frame.attrs.update(
+            {
+                "provider_status": status,
+                "source": "BOK ECOS KeyStatisticList",
+                "error_code": error_code,
+                "fetched_at": now_kst().isoformat(timespec="seconds"),
+                "usable_data": False,
+            }
+        )
+        return frame
+
     if not ecos_key:
-        return pd.DataFrame(), "ECOS API 키가 설정되지 않았습니다. ENV_FILE_PATH, Streamlit Secrets 또는 서버 환경변수를 확인하세요."
+        return ecos_frame("missing_key", "missing_key"), "ECOS API 키가 설정되지 않았습니다. ENV_FILE_PATH, Streamlit Secrets 또는 서버 환경변수를 확인하세요."
 
     try:
         url = f"{ECOS_API_URL}/{ecos_key}/json/kr/1/100/"
@@ -4182,19 +4285,61 @@ def load_ecos_key_statistics(refresh_token: int, ecos_key: str) -> tuple[pd.Data
 
         if isinstance(payload, dict) and "RESULT" in payload:
             result = payload.get("RESULT") or {}
-            message = clean_text(result.get("MESSAGE", "ECOS ?? ??"))
-            return pd.DataFrame(), f"ECOS ?? ??: {message}"
+            code = clean_text(result.get("CODE", "unknown"))
+            message = clean_text(result.get("MESSAGE", "ECOS 응답 오류"))
+            return ecos_frame("error", f"api_status_{code}"), f"ECOS API 응답 오류: {message}"
 
         rows = _ecos_payload_rows(payload)
         if not rows:
-            return pd.DataFrame(), "ECOS ??? ???? ????."
+            return ecos_frame("empty", "empty_response"), "ECOS API 응답에 표시 가능한 데이터가 없습니다."
 
         df = pd.json_normalize(rows)
         df.columns = [str(col).strip() for col in df.columns]
         df["_row_order"] = range(len(df))
+        df.attrs.update(
+            {
+                "provider_status": "ready",
+                "source": "BOK ECOS KeyStatisticList",
+                "error_code": None,
+                "fetched_at": now_kst().isoformat(timespec="seconds"),
+                "usable_data": True,
+            }
+        )
         return df, None
     except Exception as exc:
-        return pd.DataFrame(), "ECOS API 호출 실패: " + sanitize_secret_text(str(exc))
+        safe_error = sanitize_secret_text(str(exc)).lower()
+        error_code = "tls_error" if "ssl" in safe_error or "certificate" in safe_error else "request_error"
+        return ecos_frame("error", error_code), "ECOS API 호출에 실패했습니다. 데이터 출처 상태를 확인하세요."
+
+
+def ecos_period_timestamp(value: Any) -> pd.Timestamp | None:
+    text = clean_text(str(value or "")).upper()
+    try:
+        quarter_match = re.fullmatch(r"(\d{4})Q([1-4])", text)
+        if quarter_match:
+            year, quarter = int(quarter_match.group(1)), int(quarter_match.group(2))
+            return pd.Period(f"{year}Q{quarter}", freq="Q").end_time.normalize()
+        digits = re.sub(r"\D", "", text)
+        if len(digits) >= 8:
+            return pd.Timestamp(datetime.strptime(digits[:8], "%Y%m%d"))
+        if len(digits) == 6:
+            return pd.Period(digits, freq="M").end_time.normalize()
+        if len(digits) == 4:
+            return pd.Timestamp(f"{digits}-12-31")
+    except Exception:
+        return None
+    return None
+
+
+def latest_ecos_observation_timestamp(df: pd.DataFrame | None) -> pd.Timestamp | None:
+    if df is None or df.empty:
+        return None
+    timestamps = [
+        ecos_period_timestamp(_ecos_time_from_row(row))
+        for _, row in df.iterrows()
+    ]
+    valid = [stamp for stamp in timestamps if stamp is not None and not pd.isna(stamp)]
+    return max(valid) if valid else None
 
 
 def ecos_metric_snapshot(df: pd.DataFrame, title: str, keywords: list[str], subtitle_prefix: str = "") -> Snapshot:
@@ -4205,6 +4350,16 @@ def ecos_metric_snapshot(df: pd.DataFrame, title: str, keywords: list[str], subt
     if matched.empty:
         return apply_snapshot_quality(Snapshot(title, title, None, None, None, None, None, df, source="BOK ECOS", unit="unknown", frequency="daily", is_fallback=False))
 
+    matched = matched.copy()
+    matched["_observation_ts"] = matched.apply(
+        lambda row: ecos_period_timestamp(_ecos_time_from_row(row)),
+        axis=1,
+    )
+    matched = matched.sort_values(
+        ["_observation_ts", "_row_order"],
+        ascending=[False, False],
+        na_position="last",
+    )
     latest = matched.iloc[0]
     previous = matched.iloc[1] if len(matched) > 1 else None
 
@@ -4214,6 +4369,7 @@ def ecos_metric_snapshot(df: pd.DataFrame, title: str, keywords: list[str], subt
     change_pct = None if value is None or prev_value in (None, 0) else (change / prev_value) * 100
     display_name = subtitle_prefix if subtitle_prefix else title
     unit = _ecos_unit_from_row(latest) or "unknown"
+    observation_time = ecos_period_timestamp(_ecos_time_from_row(latest))
 
     return apply_snapshot_quality(Snapshot(
         key=title,
@@ -4222,7 +4378,7 @@ def ecos_metric_snapshot(df: pd.DataFrame, title: str, keywords: list[str], subt
         prev_close=prev_value,
         change=change,
         change_pct=change_pct,
-        asof=pd.Timestamp.now(),
+        asof=observation_time,
         raw=matched,
         source="BOK ECOS",
         unit=unit,
@@ -4611,6 +4767,18 @@ def clamp(value: float, low: float, high: float) -> float:
     return float(max(low, min(high, value)))
 
 
+def align_int_step(value: Any, min_value: int, max_value: int, step: int) -> int:
+    if step <= 0 or max_value < min_value:
+        raise ValueError("invalid slider bounds")
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        numeric = min_value
+    bounded = max(min_value, min(max_value, numeric))
+    aligned = min_value + round((bounded - min_value) / step) * step
+    return max(min_value, min(max_value, aligned))
+
+
 def signed_pct_text(value: float | None) -> str:
     return "N/A" if value is None else f"{value:+.2f}%"
 
@@ -4990,19 +5158,36 @@ def disclosure_risk_for_stock(code: str, name: str, disclosures: pd.DataFrame) -
     return best
 
 
-def expected_edge_from_plan(plan: dict[str, Any], leadership_score: float, regime: MarketRegimeOutput, disclosure_risk: dict[str, Any]) -> tuple[float | None, float | None, float]:
+def expected_edge_from_plan(
+    plan: dict[str, Any],
+    leadership_score: float,
+    regime: MarketRegimeOutput,
+    disclosure_risk: dict[str, Any],
+    *,
+    calibrated_win_probability: float | None = None,
+    calibration_confidence: float | None = None,
+    calibration_sample_size: int = 0,
+) -> tuple[float | None, float | None, float]:
     risk_pct = safe_float(plan.get("risk_pct"))
     upside_pct = safe_float(plan.get("upside_pct"))
     raw_rr = safe_float(plan.get("rr"))
     if risk_pct is None or upside_pct is None or raw_rr is None or risk_pct <= 0:
-        return None, None, 35.0
-    p_win = clamp(0.42 + (leadership_score - 50.0) / 160.0 + (raw_rr - 1.0) / 20.0 + (regime.score - 50.0) / 400.0, 0.20, 0.72)
+        return None, None, 0.0
+    p_win = safe_float(calibrated_win_probability)
+    calibrated_confidence = safe_float(calibration_confidence)
+    if (
+        p_win is None
+        or not 0.0 <= p_win <= 1.0
+        or calibrated_confidence is None
+        or calibration_sample_size < 30
+    ):
+        return None, None, 0.0
     cost = RISK_DEFAULTS["trading_cost_pct"] + RISK_DEFAULTS["slippage_pct"]
     expected_edge = p_win * upside_pct - (1.0 - p_win) * risk_pct - cost
     regime_factor = 0.55 if regime.regime == "Extreme Risk-Off" else 0.75 if regime.regime == "Risk-Off" else 1.0 if regime.regime == "Neutral" else 1.08
     severity = str(disclosure_risk.get("severity", "Low"))
     event_factor = 0.0 if severity == "Critical" else 0.55 if severity == "High" else 0.82 if severity == "Medium" else 1.0
-    confidence = clamp((leadership_score * 0.45 + regime.confidence * 0.25 + 60 * 0.30), 20, 90)
+    confidence = clamp(calibrated_confidence, 0, 100)
     quality_adjusted_rr = raw_rr * (confidence / 100.0) * regime_factor * event_factor
     return expected_edge, quality_adjusted_rr, confidence
 
@@ -5031,8 +5216,20 @@ def build_action_decision(
     disclosure_risk: dict[str, Any],
     execution_cost_bps: float | None = None,
     kill_switch_active: bool = False,
+    *,
+    calibrated_win_probability: float | None = None,
+    calibration_confidence: float | None = None,
+    calibration_sample_size: int = 0,
 ) -> ActionDecision:
-    expected_edge, quality_adjusted_rr, confidence = expected_edge_from_plan(plan, leadership_score, regime, disclosure_risk)
+    expected_edge, quality_adjusted_rr, confidence = expected_edge_from_plan(
+        plan,
+        leadership_score,
+        regime,
+        disclosure_risk,
+        calibrated_win_probability=calibrated_win_probability,
+        calibration_confidence=calibration_confidence,
+        calibration_sample_size=calibration_sample_size,
+    )
     execution_cost_pct = safe_float(execution_cost_bps)
     if execution_cost_pct is not None:
         execution_cost_pct = execution_cost_pct / 100.0
@@ -5056,13 +5253,15 @@ def build_action_decision(
         blockers.append("품질조정 손익비 부족")
     if expected_edge is None or expected_edge <= 0:
         blockers.append("기대값 검증 필요")
+    if expected_edge is None:
+        blockers.append("검증된 승률 데이터 부족")
     if regime.regime == "Extreme Risk-Off" and (raw_rr is None or raw_rr < RISK_DEFAULTS["extreme_risk_off_min_rr"]):
         blockers.append("극단 리스크오프 기준 미달")
     if kill_switch_active:
         blockers.append("신호 성과 kill-switch")
 
-    edge_score = 50 if expected_edge is None else clamp(50 + expected_edge * 12, 0, 100)
-    rr_score = 50 if quality_adjusted_rr is None else clamp(quality_adjusted_rr / 3.0 * 100, 0, 100)
+    edge_score = 0 if expected_edge is None else clamp(50 + expected_edge * 12, 0, 100)
+    rr_score = 0 if quality_adjusted_rr is None else clamp(quality_adjusted_rr / 3.0 * 100, 0, 100)
     event_penalty = safe_float(disclosure_risk.get("penalty")) or 0.0
     score = (
         regime.score * 0.15
@@ -5096,7 +5295,7 @@ def build_action_decision(
         base_max *= 1.15
     if severity in {"Medium", "High"}:
         base_max *= 0.55
-    if severity == "Critical" or kill_switch_active:
+    if severity == "Critical" or kill_switch_active or expected_edge is None:
         base_max = 0.0
     max_position_pct = clamp(base_max, 0.0, RISK_DEFAULTS["max_position_pct"])
 
@@ -5692,7 +5891,12 @@ def _dark_chart_style(ax: plt.Axes) -> None:
         spine.set_color("#334155")
 
 
-def plot_portfolio_value_chart(points: list[Any], benchmark_points: list[Any]) -> plt.Figure:
+def plot_portfolio_value_chart(
+    points: list[Any],
+    benchmark_points: list[Any],
+    *,
+    risk_proxy: bool = False,
+) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(10, 3.2))
     fig.patch.set_facecolor("#0f172a")
     _dark_chart_style(ax)
@@ -5702,19 +5906,25 @@ def plot_portfolio_value_chart(points: list[Any], benchmark_points: list[Any]) -
         return fig
     dates = [_portfolio_point_date(point) for point in points]
     values = [_portfolio_point_value(point) for point in points]
-    ax.plot(dates, values, color="#a78bfa", linewidth=2.2, label="포트폴리오")
+    portfolio_label = "현재수량 고정 위험 프록시" if risk_proxy else "포트폴리오"
+    ax.plot(dates, values, color="#a78bfa", linewidth=2.2, label=portfolio_label)
     if benchmark_points:
         bench_dates = [_portfolio_point_date(point) for point in benchmark_points]
         bench_values = [_portfolio_point_value(point) for point in benchmark_points]
         ax.plot(bench_dates, bench_values, color="#38bdf8", linewidth=1.6, label="벤치마크", alpha=0.85)
-    ax.set_title("포트폴리오 vs 벤치마크", color="#f8fafc", loc="left", fontsize=12, weight="bold")
+    title = "현재수량 고정 위험 프록시 vs 벤치마크" if risk_proxy else "포트폴리오 vs 벤치마크"
+    ax.set_title(title, color="#f8fafc", loc="left", fontsize=12, weight="bold")
     ax.legend(facecolor="#111827", edgecolor="#334155", labelcolor="#e5e7eb")
     fig.autofmt_xdate(rotation=0)
     fig.tight_layout()
     return fig
 
 
-def plot_portfolio_drawdown_chart(drawdowns: list[dict[str, Any]]) -> plt.Figure:
+def plot_portfolio_drawdown_chart(
+    drawdowns: list[dict[str, Any]],
+    *,
+    risk_proxy: bool = False,
+) -> plt.Figure:
     fig, ax = plt.subplots(figsize=(10, 2.8))
     fig.patch.set_facecolor("#0f172a")
     _dark_chart_style(ax)
@@ -5726,7 +5936,8 @@ def plot_portfolio_drawdown_chart(drawdowns: list[dict[str, Any]]) -> plt.Figure
     values = [safe_float(row.get("drawdown")) or 0.0 for row in drawdowns]
     ax.fill_between(dates, values, 0, color="#2563eb", alpha=0.35)
     ax.plot(dates, values, color="#60a5fa", linewidth=1.8)
-    ax.set_title("드로다운", color="#f8fafc", loc="left", fontsize=12, weight="bold")
+    title = "현재수량 고정 MDD 프록시" if risk_proxy else "드로다운"
+    ax.set_title(title, color="#f8fafc", loc="left", fontsize=12, weight="bold")
     ax.yaxis.set_major_formatter(lambda value, _: f"{value * 100:.0f}%")
     fig.autofmt_xdate(rotation=0)
     fig.tight_layout()
@@ -5860,12 +6071,16 @@ def risk_return_panel_html(metrics: dict[str, Any], benchmark_excess: Any = None
     cagr = safe_float(metrics.get("cagr"))
     benchmark_value = portfolio_format_percent(benchmark_excess, signed=True)
     benchmark_tone = "pi-value-good" if (safe_float(benchmark_excess) or 0) > 0 else "pi-value-risk" if (safe_float(benchmark_excess) or 0) < 0 else "pi-value-info"
+    is_risk_proxy = metrics.get("historyMode") == "fixed_current_quantities_risk_proxy"
+    volatility_label = "현재비중 변동성 프록시" if is_risk_proxy else "연율 변동성"
+    drawdown_label = "현재비중 MDD 프록시" if is_risk_proxy else "최대 낙폭"
+    subtitle = "현재 보유수량 고정 위험 시나리오" if is_risk_proxy else "수익률·변동성·위험조정 효율"
     metric_specs = [
         ("CAGR", portfolio_format_percent(cagr), "연복리 성장률", "good" if cagr is not None and cagr > 0.06 else "info"),
         ("기간 수익률", portfolio_format_percent(period_return, signed=True), "선택 기간 누적", "good" if period_return is not None and period_return > 0 else "risk" if period_return is not None and period_return < 0 else "info"),
-        ("연율 변동성", portfolio_format_percent(volatility), "변동성 높음" if volatility is not None and volatility >= 0.25 else "변동성 점검", "risk" if volatility is not None and volatility >= 0.40 else "warn" if volatility is not None and volatility >= 0.25 else "info"),
+        (volatility_label, portfolio_format_percent(volatility), "변동성 높음" if volatility is not None and volatility >= 0.25 else "변동성 점검", "risk" if volatility is not None and volatility >= 0.40 else "warn" if volatility is not None and volatility >= 0.25 else "info"),
         ("Sharpe", "N/A" if sharpe is None else f"{sharpe:.2f}", "위험 대비 효율 낮음" if sharpe is not None and sharpe < 0.5 else "위험조정 효율", "warn" if sharpe is None or sharpe < 0.5 else "good"),
-        ("최대 낙폭", portfolio_format_percent(max_drawdown), "고점 대비 낙폭", "risk" if max_drawdown is not None and max_drawdown < -0.10 else "info"),
+        (drawdown_label, portfolio_format_percent(max_drawdown), "실제 보유성과가 아닌 위험 프록시" if is_risk_proxy else "고점 대비 낙폭", "risk" if max_drawdown is not None and max_drawdown < -0.10 else "info"),
         ("Beta", "N/A" if beta is None else f"{beta:.2f}", "시장 민감도 높음" if beta is not None and beta > 1.2 else "시장 민감도", "warn" if beta is not None and beta > 1.2 else "info"),
     ]
     tiles = "".join(_pi_metric_tile_html(label, value, helper, tone) for label, value, helper, tone in metric_specs)
@@ -5876,7 +6091,7 @@ def risk_return_panel_html(metrics: dict[str, Any], benchmark_excess: Any = None
                 <span class="pi-badge info">검토 지표</span>
             </div>
             <div class="pi-card-body">
-                <div class="pi-card-subtitle">수익률·변동성·위험조정 효율</div>
+                <div class="pi-card-subtitle">{html.escape(subtitle)}</div>
                 <div class="pi-metric-grid">{tiles}</div>
                 <div class="pi-benchmark-strip">
                     <span>벤치마크 대비 기간 초과수익</span>
@@ -5964,9 +6179,14 @@ def render_insight_engine_card(insights: list[dict[str, str]], metrics: dict[str
     st.html(insight_engine_card_html(insights, metrics))
 
 
-def concentration_card_html(holdings: list[Any], concentration: dict[str, Any]) -> str:
+def concentration_card_html(
+    holdings: list[Any],
+    concentration: dict[str, Any],
+    total_portfolio_value: float | None = None,
+) -> str:
     top = sorted(holdings or [], key=lambda h: (safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0), reverse=True)[:5]
-    total = sum((safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0) for h in holdings or [])
+    invested_total = sum((safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0) for h in holdings or [])
+    total = max(invested_total, safe_float(total_portfolio_value) or 0.0)
     rows = []
     for idx, h in enumerate(top, 1):
         value = (safe_float(getattr(h, "quantity", 0)) or 0) * (safe_float(getattr(h, "current_price", 0)) or 0)
@@ -6083,10 +6303,20 @@ def render_portfolio_risk_cockpit_section(
 ) -> None:
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     parsed_rows, parse_errors = parse_portfolio_text(holdings_text)
-    using_mock = not parsed_rows
-    holdings = getHoldings(parsed_rows, snapshot, code_to_name)
-    total_assets = None if using_mock else safe_float(st.session_state.get("portfolio_total_assets"))
-    cash = None if using_mock else safe_float(st.session_state.get("portfolio_cash"))
+    allow_mock = mock_data_enabled()
+    using_mock = not parsed_rows and allow_mock
+    context, context_notices = build_session_portfolio_context(parsed_rows, snapshot, code_to_name)
+    if context is not None:
+        holdings = list(context.holdings)
+        total_assets = context.computed_total
+        cash = context.cash
+        price_series, _, _, history_notices = build_reconstructed_portfolio_series(context, refresh_token)
+        context_notices.extend(history_notices)
+    else:
+        holdings = getHoldings(parsed_rows, snapshot, code_to_name, allow_mock=allow_mock)
+        total_assets = None if using_mock else safe_float(st.session_state.get("portfolio_total_assets"))
+        cash = None if using_mock else safe_float(st.session_state.get("portfolio_cash"))
+        price_series = getPortfolioSnapshots(allow_mock=allow_mock)
     thresholds = PortfolioRiskThresholds(
         single_stock_weight=float(RISK_DEFAULTS.get("max_position_pct", 0.10) or 0.10),
         sector_weight=float(RISK_DEFAULTS.get("max_sector_pct", 0.30) or 0.30),
@@ -6097,13 +6327,14 @@ def render_portfolio_risk_cockpit_section(
         total_assets=total_assets,
         cash=cash,
         snapshots=snapshot,
-        price_series=getPortfolioSnapshots(),
+        price_series=price_series,
         thresholds=thresholds,
-        allow_mock=True,
+        allow_mock=allow_mock,
         source_label="Mock portfolio data" if using_mock else "Sidebar portfolio input",
     )
-    if parse_errors:
-        st.warning("포트폴리오 리스크 관제실 입력 확인: " + " / ".join(parse_errors[:2]))
+    input_notices = [*parse_errors, *context_notices]
+    if input_notices:
+        st.warning("포트폴리오 리스크 관제실 입력 확인: " + " / ".join(input_notices[:2]))
     st.html(portfolio_risk_cockpit_html(state))
 
 
@@ -6118,7 +6349,7 @@ def render_data_trust_source_panel_section(
 
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     parsed_rows, _ = parse_portfolio_text(holdings_text)
-    using_mock = not parsed_rows
+    using_mock = not parsed_rows and mock_data_enabled()
     required_secret_status = check_required_secrets()
     dart_present = bool(required_secret_status["dart"]["present"])
     ecos_present = bool(required_secret_status["ecos"]["present"])
@@ -6137,11 +6368,41 @@ def render_data_trust_source_panel_section(
         "KOSIS_API_KEY": bool(config_value("KOSIS_API_KEY", "")),
         "FRED_API_KEY": bool(config_value("FRED_API_KEY", "")),
     }
+    dart_runtime_df = load_recent_disclosures(refresh_token, DART_API_TOKEN, limit=150)
+    dart_dates = pd.to_datetime(dart_runtime_df.get("date", pd.Series(dtype=str)), errors="coerce") if not dart_runtime_df.empty else pd.Series(dtype="datetime64[ns]")
+    dart_asof = dart_dates.max().date().isoformat() if not dart_dates.empty and pd.notna(dart_dates.max()) else None
+    ecos_runtime_df, _ = load_ecos_key_statistics(refresh_token, ECOS_API_KEY)
+    ecos_stamp = latest_ecos_observation_timestamp(ecos_runtime_df)
+    ecos_asof = ecos_stamp.date().isoformat() if ecos_stamp is not None else None
+    ecos_fetched_at = ecos_runtime_df.attrs.get("fetched_at")
+    ecos_stale = False
+    if ecos_stamp is not None:
+        age_days = (now_kst().date() - ecos_stamp.date()).days
+        ecos_stale = age_days > 45 if age_days >= 0 else False
+    runtime_source_status = {
+        "dart_disclosure": {
+            "status": dart_runtime_df.attrs.get("provider_status", "unknown"),
+            "source": dart_runtime_df.attrs.get("source", "OpenDART"),
+            "fetched_at": dart_runtime_df.attrs.get("fetched_at"),
+            "usable_data": bool(dart_runtime_df.attrs.get("usable_data", not dart_runtime_df.empty)),
+            "as_of_date": dart_asof,
+        },
+        "macro": {
+            "status": ecos_runtime_df.attrs.get("provider_status", "unknown"),
+            "source": ecos_runtime_df.attrs.get("source", "BOK ECOS"),
+            "fetched_at": ecos_fetched_at,
+            "usable_data": bool(ecos_runtime_df.attrs.get("usable_data", not ecos_runtime_df.empty)),
+            "as_of_date": ecos_asof,
+            "available_at": ecos_fetched_at,
+            "stale_data_flag": ecos_stale,
+        },
+    }
     state = build_data_trust_source_panel(
         snapshots=snapshot,
         portfolio_holding_count=len(parsed_rows),
         using_mock_portfolio=using_mock,
         api_key_status=api_key_status,
+        runtime_source_status=runtime_source_status,
     )
     st.html(data_trust_source_panel_html(state))
 
@@ -6154,9 +6415,7 @@ def render_market_regime_macro_radar_section(
     flag_value = os.getenv("STANCE_ENABLE_MARKET_REGIME_RADAR", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    show_mock_value = config_value("SHOW_MOCK_DATA", config_value("DEMO_MODE", "false")).strip().lower()
-    show_mock_macro = show_mock_value in {"1", "true", "yes", "on"}
-    state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=show_mock_macro)
+    state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=mock_data_enabled())
     st.html(market_regime_macro_radar_html(state))
 
 
@@ -6170,8 +6429,9 @@ def render_krw_rates_fx_dashboard_section(
         return
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     parsed_rows, _ = parse_portfolio_text(holdings_text)
-    holdings = getHoldings(parsed_rows, snapshot, code_to_name)
-    state = build_krw_rates_fx_dashboard(snapshots=snapshot, holdings=holdings, allow_mock=True)
+    allow_mock = mock_data_enabled()
+    holdings = getHoldings(parsed_rows, snapshot, code_to_name, allow_mock=allow_mock)
+    state = build_krw_rates_fx_dashboard(snapshots=snapshot, holdings=holdings, allow_mock=allow_mock)
     st.html(krw_rates_fx_dashboard_html(state))
 
 
@@ -6183,7 +6443,7 @@ def render_valuation_relative_cheapness_panel_section(
     flag_value = os.getenv("STANCE_ENABLE_VALUATION_PANEL", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_valuation_relative_cheapness_panel(allow_mock=True)
+    state = build_valuation_relative_cheapness_panel(allow_mock=mock_data_enabled())
     st.html(valuation_relative_cheapness_panel_html(state))
 
 
@@ -6195,8 +6455,89 @@ def render_fundamental_quality_panel_section(
     flag_value = os.getenv("STANCE_ENABLE_FUNDAMENTAL_QUALITY", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_fundamental_quality_panel(allow_mock=True)
+    state = build_fundamental_quality_panel(allow_mock=mock_data_enabled())
     st.html(fundamental_quality_panel_html(state))
+
+
+def runtime_dart_event_payload(refresh_token: int) -> dict[str, Any]:
+    frame = load_recent_disclosures(refresh_token, DART_API_TOKEN, limit=150)
+    if frame is None:
+        return {
+            "events": [],
+            "status": "error",
+            "source": "OpenDART",
+            "fetched_at": None,
+            "error_code": "provider_result_missing",
+        }
+    source = str(frame.attrs.get("source") or "OpenDART")
+    events = [] if frame.empty else adapt_open_dart_rows(
+        frame.to_dict("records"),
+        source=source,
+        fetched_at=frame.attrs.get("fetched_at"),
+        is_fallback=bool(frame.attrs.get("is_fallback", False)),
+    )
+    return {
+        "events": events,
+        "status": str(frame.attrs.get("provider_status") or ("ready" if events else "empty")),
+        "source": source,
+        "fetched_at": frame.attrs.get("fetched_at"),
+        "error_code": str(frame.attrs.get("error_code") or "") or None,
+    }
+
+
+def runtime_dart_events(refresh_token: int) -> list[dict[str, Any]]:
+    """Compatibility wrapper for callers that only consume event rows."""
+    return list(runtime_dart_event_payload(refresh_token)["events"])
+
+
+def build_runtime_dart_catalyst_state(refresh_token: int) -> Any:
+    payload = runtime_dart_event_payload(refresh_token)
+    state = build_dart_disclosure_catalyst_panel(
+        disclosure_events=payload["events"],
+        allow_mock=mock_data_enabled(),
+    )
+    if payload["events"] or payload["status"] != "error" or mock_data_enabled():
+        return state
+
+    error_code = str(payload.get("error_code") or "provider_error")
+    source = str(payload.get("source") or "OpenDART")
+    updated_points = []
+    for point in state.data_points:
+        meta = replace(
+            point.meta,
+            source=source,
+            fetched_at=payload.get("fetched_at"),
+            stale_data_flag=False,
+            missing_data_flag=True,
+            errors=(error_code,),
+            error_code=error_code,
+        )
+        updated_points.append(replace(point, meta=meta))
+    return replace(
+        state,
+        status="error",
+        summary="DART 공시 공급자 연결에 실패해 최신 공시를 확인할 수 없습니다.",
+        data_points=tuple(updated_points),
+        explanation=("데이터 출처 상태를 확인한 뒤 다시 시도하세요.",),
+        risk_flags=tuple(dict.fromkeys((*state.risk_flags, "dart_provider_error"))),
+    )
+
+
+def build_runtime_forward_alpha_state(snapshot: dict[str, Snapshot], refresh_token: int) -> Any:
+    allow_mock = mock_data_enabled()
+    valuation_state = build_valuation_relative_cheapness_panel(allow_mock=allow_mock)
+    quality_state = build_fundamental_quality_panel(allow_mock=allow_mock)
+    dart_state = build_runtime_dart_catalyst_state(refresh_token)
+    flow_state = build_smart_money_flow_short_pressure_panel(allow_mock=allow_mock)
+    regime_state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=allow_mock)
+    return build_forward_alpha_ranking_panel(
+        valuation_state=valuation_state,
+        quality_state=quality_state,
+        dart_state=dart_state,
+        flow_state=flow_state,
+        regime_state=regime_state,
+        allow_mock=False,
+    )
 
 
 def render_dart_disclosure_catalyst_panel_section(
@@ -6207,7 +6548,7 @@ def render_dart_disclosure_catalyst_panel_section(
     flag_value = os.getenv("STANCE_ENABLE_DART_CATALYSTS", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_dart_disclosure_catalyst_panel(allow_mock=True)
+    state = build_runtime_dart_catalyst_state(refresh_token)
     st.html(dart_disclosure_catalyst_panel_html(state))
 
 
@@ -6219,7 +6560,7 @@ def render_smart_money_flow_short_pressure_panel_section(
     flag_value = os.getenv("STANCE_ENABLE_FLOW_SHORT_PRESSURE", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_smart_money_flow_short_pressure_panel(allow_mock=True)
+    state = build_smart_money_flow_short_pressure_panel(allow_mock=mock_data_enabled())
     st.html(smart_money_flow_short_pressure_panel_html(state))
 
 
@@ -6231,7 +6572,7 @@ def render_forward_alpha_ranking_panel_section(
     flag_value = os.getenv("STANCE_ENABLE_FORWARD_ALPHA_RANKING", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_forward_alpha_ranking_panel(allow_mock=True)
+    state = build_runtime_forward_alpha_state(snapshot, refresh_token)
     st.html(forward_alpha_ranking_panel_html(state))
 
 
@@ -6243,7 +6584,40 @@ def render_portfolio_optimizer_alert_center_section(
     flag_value = os.getenv("STANCE_ENABLE_PORTFOLIO_OPTIMIZER", "1").strip().lower()
     if flag_value in {"0", "false", "no", "off"}:
         return
-    state = build_portfolio_optimizer_alert_center(allow_mock=True)
+    allow_mock = mock_data_enabled()
+    holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
+    parsed_rows, parse_errors = parse_portfolio_text(holdings_text)
+    context, context_notices = build_session_portfolio_context(parsed_rows, snapshot, code_to_name)
+    optimizer_holdings: list[dict[str, Any]] = []
+    total_value = None
+    cash_ratio = None
+    if context is not None and context.computed_total > 0:
+        row_by_code = {str(row.get("code")): row for row in parsed_rows}
+        total_value = context.computed_total
+        cash_ratio = context.cash / total_value
+        for holding in context.holdings:
+            market_value = holding.quantity * holding.current_price
+            input_row = row_by_code.get(str(holding.symbol), {})
+            optimizer_holdings.append(
+                {
+                    "code": holding.symbol,
+                    "name": holding.name,
+                    "sector": holding.sector or "미분류",
+                    "market": str(input_row.get("market") or "UNKNOWN"),
+                    "current_weight": market_value / total_value,
+                    "current_value": market_value,
+                }
+            )
+    if parse_errors or context_notices:
+        st.warning("포트폴리오 최적화 입력 확인: " + " / ".join([*parse_errors, *context_notices][:2]))
+    alpha_state = build_runtime_forward_alpha_state(snapshot, refresh_token)
+    state = build_portfolio_optimizer_alert_center(
+        alpha_state=alpha_state,
+        holdings=optimizer_holdings,
+        total_portfolio_value=total_value,
+        cash_ratio=cash_ratio,
+        allow_mock=allow_mock,
+    )
     st.html(portfolio_optimizer_alert_center_html(state))
 
 
@@ -6254,11 +6628,51 @@ def render_portfolio_intelligence_section(
 ) -> None:
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     parsed_rows, parse_errors = parse_portfolio_text(holdings_text)
-    holdings = getHoldings(parsed_rows, snapshot, code_to_name)
+    allow_mock = mock_data_enabled()
+    context, context_notices = build_session_portfolio_context(parsed_rows, snapshot, code_to_name)
+    history_notices: list[str] = []
+    risk_contributions = None
+    if context is not None:
+        holdings = list(context.holdings)
+        points, benchmark_source, risk_contributions, history_notices = build_reconstructed_portfolio_series(
+            context,
+            refresh_token,
+        )
+    else:
+        holdings = getHoldings(parsed_rows, snapshot, code_to_name, allow_mock=allow_mock)
+        points = getPortfolioSnapshots(allow_mock=allow_mock)
+        benchmark_source = getBenchmarkSeries(allow_mock=allow_mock)
+    if not holdings:
+        st.html(
+            """
+            <section class="portfolio-intelligence-shell" aria-label="포트폴리오 인텔리전스">
+                <div class="portfolio-intelligence-title">
+                    <div><strong>포트폴리오 인텔리전스</strong><span>실제 보유종목을 입력하면 위험·배분·성과를 계산합니다.</span></div>
+                    <span class="pi-badge info">데이터 입력 필요</span>
+                </div>
+                <div class="thesis">운영 모드에서는 모의 포트폴리오 수치를 표시하지 않습니다. 사이드바의 보유종목 CSV와 현금을 입력하세요.</div>
+            </section>
+            """
+        )
+        return
     summary = getPortfolioSummary(holdings)
     current_allocation = summary.get("allocation", {})
     target_allocation = summary.get("targetAllocation", [])
     total_value = safe_float(summary.get("totalValue")) or 0.0
+    if context is not None:
+        total_value = context.computed_total
+        current_allocation = {
+            asset_class: {
+                "value": safe_float(row.get("value")) or 0.0,
+                "weight": (safe_float(row.get("value")) or 0.0) / total_value if total_value > 0 else 0.0,
+            }
+            for asset_class, row in current_allocation.items()
+            if isinstance(row, dict)
+        }
+        current_allocation["cash"] = {
+            "value": context.cash,
+            "weight": context.cash / total_value if total_value > 0 else 0.0,
+        }
     drift = calculateAllocationDrift(current_allocation, target_allocation)
     suggestions = generateRebalanceSuggestions(current_allocation, target_allocation, total_value, {"threshold": 0.03, "minimum_trade_amount": 100_000})
 
@@ -6269,17 +6683,17 @@ def render_portfolio_intelligence_section(
         index=5,
         key="portfolio_intelligence_range_label",
     )
-    points = getPortfolioSnapshots()
     filtered_points = _filter_price_points(points, range_key)
-    benchmark_points = _filter_price_points(getBenchmarkSeries(), range_key)
+    benchmark_points = _filter_price_points(benchmark_source, range_key)
     returns = calculatePeriodReturns(filtered_points)
-    cagr = calculateCAGR(filtered_points)
+    is_fixed_quantity_proxy = context is not None
+    cagr = None if is_fixed_quantity_proxy else calculateCAGR(filtered_points)
     volatility = calculateAnnualizedVolatility(returns)
-    sharpe = calculateSharpeRatio(cagr, volatility, 0.03)
+    sharpe = None if is_fixed_quantity_proxy else calculateSharpeRatio(cagr, volatility, 0.03)
     max_drawdown = calculateMaxDrawdown(filtered_points)
-    relative_return = calculateBenchmarkRelativeReturn(filtered_points, benchmark_points) if benchmark_points else None
-    beta = calculateBeta(returns, calculatePeriodReturns(benchmark_points)) if benchmark_points else None
-    concentration = calculateConcentrationRisk(holdings)
+    relative_return = calculateBenchmarkRelativeReturn(filtered_points, benchmark_points) if benchmark_points and not is_fixed_quantity_proxy else None
+    beta = calculateBeta(returns, calculatePeriodReturns(benchmark_points)) if benchmark_points and not is_fixed_quantity_proxy else None
+    concentration = calculateConcentrationRisk(holdings, total_portfolio_value=total_value)
 
     cash_weight = safe_float(current_allocation.get("cash", {}).get("weight")) if isinstance(current_allocation.get("cash"), dict) else None
     cash_weight = cash_weight if cash_weight is not None else 0.0
@@ -6293,12 +6707,15 @@ def render_portfolio_intelligence_section(
             "concentration": concentration,
         }
     )
-    watchlist_items = _holding_stock_signals(holdings, snapshot) or getWatchlist()
+    watchlist_items = _holding_stock_signals(holdings, snapshot) or getWatchlist(allow_mock=allow_mock)
     watchlist_signals = generateWatchlistSignals(watchlist_items)
 
+    notices = [*parse_errors, *context_notices, *history_notices]
+    if is_fixed_quantity_proxy and filtered_points:
+        notices.append("현재 보유수량을 과거에 고정한 위험 프록시입니다. 실제 포트폴리오 수익률·CAGR·Sharpe가 아닙니다.")
     parse_notice = ""
-    if parse_errors:
-        parse_notice = f"<span class='pi-badge warn'>{html.escape('입력 확인: ' + ' / '.join(parse_errors[:2]))}</span>"
+    if notices:
+        parse_notice = f"<span class='pi-badge warn'>{html.escape('입력·데이터 확인: ' + ' / '.join(notices[:2]))}</span>"
     st.html(
         f"""
         <section class="portfolio-intelligence-shell" aria-label="포트폴리오 인텔리전스">
@@ -6323,11 +6740,12 @@ def render_portfolio_intelligence_section(
 
     portfolio_metrics = {
         "cagr": cagr,
-        "periodReturn": _series_return(filtered_points),
+        "periodReturn": None if is_fixed_quantity_proxy else _series_return(filtered_points),
         "volatility": volatility,
         "sharpe": sharpe,
         "maxDrawdown": max_drawdown,
         "beta": beta,
+        "historyMode": "fixed_current_quantities_risk_proxy" if is_fixed_quantity_proxy else "observed_or_demo_series",
     }
     st.html(
         f"""
@@ -6341,7 +6759,7 @@ def render_portfolio_intelligence_section(
             </div>
             <div class="pi-detail-grid">
                 {risk_return_panel_html(portfolio_metrics, relative_return)}
-                {concentration_card_html(holdings, concentration)}
+                {concentration_card_html(holdings, concentration, total_value)}
                 {insight_engine_card_html(insights, portfolio_metrics)}
                 {watchlist_signals_card_html(watchlist_signals)}
             </div>
@@ -6349,11 +6767,49 @@ def render_portfolio_intelligence_section(
         """
     )
 
-    col_chart_a, col_chart_b = st.columns([1.1, 1.0])
-    with col_chart_a:
-        st.pyplot(plot_portfolio_value_chart(filtered_points, benchmark_points), clear_figure=True)
-    with col_chart_b:
-        st.pyplot(plot_portfolio_drawdown_chart(calculateDrawdownSeries(filtered_points)), clear_figure=True)
+    if filtered_points:
+        col_chart_a, col_chart_b = st.columns([1.1, 1.0])
+        with col_chart_a:
+            st.pyplot(
+                plot_portfolio_value_chart(filtered_points, benchmark_points, risk_proxy=is_fixed_quantity_proxy),
+                clear_figure=True,
+            )
+        with col_chart_b:
+            st.pyplot(
+                plot_portfolio_drawdown_chart(
+                    calculateDrawdownSeries(filtered_points),
+                    risk_proxy=is_fixed_quantity_proxy,
+                ),
+                clear_figure=True,
+            )
+    elif context is not None:
+        st.info("변동성·최대낙폭은 보유종목 가격 이력 60거래일과 80% 이상 커버리지가 확보된 뒤 계산합니다.")
+
+    if risk_contributions is not None:
+        contribution_rows = [
+            {
+                "종목": row.symbol,
+                "현재 비중": row.weight * 100,
+                "위험기여": row.contribution_pct * 100,
+                "연율 변동성 기여": row.annualized_component_volatility * 100,
+            }
+            for row in risk_contributions.contributions
+        ]
+        st.markdown("#### 종목별 위험기여도")
+        st.caption(
+            f"현재 평가비중과 날짜 정렬 공분산으로 계산했습니다. "
+            f"관측치 {risk_contributions.observations}거래일 · 현재 수량 고정 재구성"
+        )
+        st.dataframe(
+            pd.DataFrame(contribution_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "현재 비중": st.column_config.NumberColumn(format="%.1f%%"),
+                "위험기여": st.column_config.NumberColumn(format="%.1f%%"),
+                "연율 변동성 기여": st.column_config.NumberColumn(format="%.2f%%"),
+            },
+        )
 
 
 def _korea_grade_color(grade: str) -> str:
@@ -6797,7 +7253,9 @@ def init_korea_interaction_state() -> SelectedContext:
 def _sync_korea_query_params(context: SelectedContext) -> None:
     try:
         query = serialize_query_context(context)
-        st.query_params.clear()
+        for key in CONTEXT_QUERY_KEYS:
+            if key in st.query_params and key not in query:
+                del st.query_params[key]
         for key, value in query.items():
             st.query_params[key] = value
     except Exception:
@@ -7593,10 +8051,26 @@ def render_korea_alpha_section(snapshot: dict[str, Snapshot], refresh_token: int
     )
     render_korea_context_bar("korea_alpha")
     render_explanation_panel(key_scope="korea_alpha")
+    if not mock_data_enabled():
+        st.html(
+            """
+            <section class="korea-card compact" aria-label="한국 알파 엔진 데이터 상태">
+                <div class="korea-card-title">한국 알파 엔진</div>
+                <div class="korea-card-subtitle">검증 가능한 실데이터 입력을 기다리고 있습니다.</div>
+                <div class="korea-safety-callout">
+                    운영 모드에서는 모의 가격·재무·수급·백테스트 값을 표시하지 않습니다.
+                    가격·유동성·공시 등 실제 연결 데이터만 준비되면 후보 점수를 계산하며,
+                    PIT 검증 전 기대수익과 확률은 계산 불가로 유지합니다.
+                </div>
+            </section>
+            """
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
     with st.expander("한국 알파 필터", expanded=False):
-        market_filter = st.multiselect("시장", ["KOSPI", "KOSDAQ", "ETF"], default=["KOSPI", "KOSDAQ"], key=f"korea_market_filter_{refresh_token}")
-        min_score = st.slider("최소 점수", 0, 100, 0, 5, key=f"korea_min_score_{refresh_token}")
-        grade_filter = st.multiselect("등급", ["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], default=["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], format_func=korea_format_grade, key=f"korea_grade_filter_{refresh_token}")
+        market_filter = st.multiselect("시장", ["KOSPI", "KOSDAQ", "ETF"], default=["KOSPI", "KOSDAQ"], key="korea_market_filter")
+        min_score = st.slider("최소 점수", 0, 100, 0, 5, key="korea_min_score")
+        grade_filter = st.multiselect("등급", ["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], default=["STRONG_REVIEW", "BUY_REVIEW", "WATCHLIST", "NEUTRAL", "CAUTION", "EXCLUDE"], format_func=korea_format_grade, key="korea_grade_filter")
     grade_summary = "전체" if len(grade_filter) == 6 else ", ".join(korea_format_grade(item) for item in grade_filter)
     market_summary = ", ".join(market_filter) if market_filter else "선택 없음"
     st.html(
@@ -7660,15 +8134,113 @@ def parse_portfolio_text(text: str) -> tuple[list[dict[str, Any]], list[str]]:
         if len(code) != 6 or qty is None or avg_price is None:
             errors.append(f"{idx + 1}행 code/qty/avg_price 확인 필요")
             continue
-        rows.append(
-            {
-                "code": code,
-                "qty": qty,
-                "avg_price": avg_price,
-                "sector": clean_text(str(row.get("sector", "미분류"))),
-            }
-        )
+        parsed_row: dict[str, Any] = {
+            "code": code,
+            "qty": qty,
+            "avg_price": avg_price,
+            "sector": clean_text(str(row.get("sector", "미분류"))),
+        }
+        optional_columns = {
+            "name": "name",
+            "asset_class": "asset_class",
+            "market": "market",
+            "country": "country",
+            "currency": "currency",
+            "benchmark_symbol": "benchmark_symbol",
+            "current_price": "current_price",
+        }
+        for source_column, target_key in optional_columns.items():
+            raw_value = row.get(source_column)
+            if pd.notna(raw_value) and str(raw_value).strip():
+                parsed_row[target_key] = raw_value
+        rows.append(parsed_row)
     return rows, errors
+
+
+def build_session_portfolio_context(
+    parsed_rows: list[dict[str, Any]],
+    snapshot: dict[str, Snapshot],
+    code_to_name: dict[str, str],
+) -> tuple[Any | None, list[str]]:
+    if not parsed_rows:
+        return None, []
+    current_prices = {
+        code: snap.last_close
+        for code, snap in snapshot.items()
+        if safe_float(getattr(snap, "last_close", None)) is not None
+    }
+    asof_values: list[pd.Timestamp] = []
+    for snap in snapshot.values():
+        if snap.asof is None:
+            continue
+        try:
+            stamp = pd.Timestamp(snap.asof)
+            stamp = stamp.tz_localize(KST) if stamp.tzinfo is None else stamp.tz_convert(KST)
+            asof_values.append(stamp)
+        except Exception:
+            continue
+    asof_date = max(asof_values).isoformat(timespec="seconds") if asof_values else None
+    result = adapt_legacy_csv_rows(
+        parsed_rows,
+        cash=safe_float(st.session_state.get("portfolio_cash")) or 0.0,
+        declared_total=safe_float(st.session_state.get("portfolio_total_assets")),
+        current_prices=current_prices,
+        code_to_name=code_to_name,
+        currency="KRW",
+        as_of_date=asof_date,
+    )
+    if result.data is None:
+        return None, [str(item) for item in result.errors]
+    notices = [str(item) for item in result.warnings]
+    discrepancy_ratio = result.data.declared_total_discrepancy_ratio
+    if discrepancy_ratio is not None and abs(discrepancy_ratio) > 0.01:
+        notices.append(
+            f"선언 총자산과 보유평가액+현금이 {abs(discrepancy_ratio) * 100:.1f}% 차이납니다. 계산은 보유평가액+현금을 사용합니다."
+        )
+    return result.data, notices
+
+
+def build_reconstructed_portfolio_series(
+    context: Any,
+    refresh_token: int,
+) -> tuple[list[PricePoint], list[PricePoint], Any | None, list[str]]:
+    histories: dict[str, list[tuple[Any, float]]] = {}
+    for holding in context.holdings:
+        history = load_symbol_history(str(holding.symbol), refresh_token, periods=520)
+        if history.empty:
+            histories[str(holding.symbol)] = []
+            continue
+        _, _, _, close_col, _ = find_ohlcv_columns(history)
+        close = pd.to_numeric(history[close_col], errors="coerce").dropna()
+        histories[str(holding.symbol)] = [(index, float(value)) for index, value in close.items() if float(value) > 0]
+
+    history_result = reconstruct_portfolio_value_history(context, histories, minimum_days=60, minimum_coverage=0.80)
+    risk_result = calculate_portfolio_risk_contributions(context, histories, minimum_days=60, minimum_coverage=0.80)
+    notices = [str(item) for item in (*history_result.warnings, *history_result.errors)]
+    if history_result.data is None or not history_result.data.coverage.passed:
+        return [], [], None, notices or ["가격 이력 60거래일·80% 커버리지가 필요합니다."]
+
+    points = [PricePoint(point.date, point.total_value) for point in history_result.data.points]
+    benchmark_points: list[PricePoint] = []
+    benchmark_history = load_symbol_history("KS11", refresh_token, periods=520)
+    if points and not benchmark_history.empty:
+        _, _, _, close_col, _ = find_ohlcv_columns(benchmark_history)
+        benchmark_close = pd.to_numeric(benchmark_history[close_col], errors="coerce").dropna()
+        benchmark_by_date = {
+            pd.Timestamp(index).date().isoformat(): float(value)
+            for index, value in benchmark_close.items()
+            if safe_float(value) not in (None, 0)
+        }
+        aligned = [(point.date, benchmark_by_date.get(point.date)) for point in points]
+        aligned = [(date_key, value) for date_key, value in aligned if value not in (None, 0)]
+        if aligned:
+            benchmark_base = float(aligned[0][1])
+            portfolio_base = float(points[0].value)
+            benchmark_points = [
+                PricePoint(date_key, portfolio_base * float(value) / benchmark_base)
+                for date_key, value in aligned
+            ]
+    return points, benchmark_points, risk_result.data if risk_result.data is not None else None, notices
 
 
 def render_portfolio_section(
@@ -7789,8 +8361,30 @@ def render_portfolio_section(
 def render_settings_section() -> None:
     st.markdown('<div class="section-title">설정</div>', unsafe_allow_html=True)
     st.write("핵심 리스크 기본값과 API 연결 상태를 확인합니다. 실제 주문 기능은 제공하지 않습니다.")
+    if "demo_mode_preference" not in st.session_state:
+        st.session_state.demo_mode_preference = bool(
+            st.session_state.get("demo_mode_enabled", SHOW_MOCK_DATA)
+        )
+    if "demo_mode_enabled" not in st.session_state:
+        st.session_state.demo_mode_enabled = bool(st.session_state.demo_mode_preference)
+    demo_enabled = st.toggle(
+        "데모 데이터 표시",
+        key="demo_mode_enabled",
+        on_change=persist_demo_mode_preference,
+        help="운영 기본값은 꺼짐입니다. 켜면 모의 데이터 카드가 명확한 데모 표시와 함께 나타납니다.",
+    )
+    st.caption(
+        "현재 세션: "
+        + ("데모 모드 · 실전 판단에 사용하지 마세요." if demo_enabled else "운영 모드 · 연결되지 않은 데이터는 계산 불가로 표시합니다.")
+    )
     kis_status = "활성" if kis_enabled() else "비활성 - KIS_APP_KEY/KIS_APP_SECRET 필요"
     st.info(f"KIS 공식 현재가 사용 상태: {kis_status}")
+    secret_status = check_required_secrets()
+    source_status_cols = st.columns(3)
+    source_status_cols[0].metric("OpenDART", "키 설정됨" if secret_status["dart"]["present"] else "키 미설정")
+    source_status_cols[1].metric("BOK ECOS", "키 설정됨" if secret_status["ecos"]["present"] else "키 미설정")
+    source_status_cols[2].metric("TLS 검증", "활성")
+    st.caption("키 값은 표시하지 않습니다. 실제 사용 가능 여부는 데이터 신뢰도·출처 패널의 응답 상태를 확인하세요.")
     setting_labels = {
         "risk_per_trade_pct": "1회 거래 최대 손실률",
         "max_position_pct": "단일 종목 최대 비중",
@@ -7852,13 +8446,31 @@ def _candidate_display_rows(candidates: list[dict[str, Any]]) -> list[dict[str, 
     return rows
 
 
+def saved_discovery_scan_result(value: Any) -> tuple[int, list[dict[str, Any]], list[str], int, int] | None:
+    if not isinstance(value, tuple) or len(value) != 5:
+        return None
+    max_symbols, candidates, warnings, total, scanned = value
+    if not isinstance(candidates, list) or not isinstance(warnings, list):
+        return None
+    try:
+        return int(max_symbols), candidates, warnings, int(total), int(scanned)
+    except (TypeError, ValueError):
+        return None
+
+
 def render_alpha_discovery_summary(refresh_token: int) -> None:
     requested = bool(st.session_state.get("discovery_scan_requested", False))
-    if not requested:
+    saved = saved_discovery_scan_result(st.session_state.get("discovery_scan_result"))
+    if saved is not None:
+        _, candidates, warnings, total, scanned = saved
+    elif requested:
+        max_symbols = int(st.session_state.get("discovery_max_symbols", 220))
+        candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
+        st.session_state.discovery_scan_result = (max_symbols, candidates, warnings, total, scanned)
+        st.session_state.discovery_scan_requested = False
+    else:
         st.info("알파 후보 탐색을 실행하면 대시보드 요약에 상위 후보가 표시됩니다.")
         return
-    max_symbols = int(st.session_state.get("discovery_max_symbols", 220))
-    candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
     if not candidates:
         st.warning("상위 후보를 찾지 못했습니다. 데이터 품질 또는 시장 필터를 확인하세요.")
         return
@@ -7950,11 +8562,17 @@ def render_alpha_discovery_section(refresh_token: int) -> None:
         '<div class="small-note">KOSPI/KOSDAQ 후보를 스캔해 상대강도, 신고가 근접, 거래대금, 눌림목, 생존주 조건을 검토합니다. 결과는 매수 지시가 아니라 검토 후보입니다.</div>',
         unsafe_allow_html=True,
     )
+    max_symbols_default = align_int_step(
+        st.session_state.get("discovery_max_symbols", 220),
+        50,
+        1000,
+        50,
+    )
     max_symbols = st.slider(
         "스캔 종목 수",
         min_value=50,
         max_value=1000,
-        value=int(st.session_state.get("discovery_max_symbols", 220)),
+        value=max_symbols_default,
         step=50,
         help="스캔 수가 많을수록 시간이 오래 걸립니다.",
     )
@@ -7963,17 +8581,27 @@ def render_alpha_discovery_section(refresh_token: int) -> None:
     with col_run:
         if st.button("전체시장 스캔 실행", use_container_width=True):
             st.session_state.discovery_scan_requested = True
+            st.session_state.pop("discovery_scan_result", None)
             run_alpha_discovery_scan.clear()
     with col_clear:
         if st.button("스캔 결과 새로고침", use_container_width=True):
             st.session_state.discovery_scan_requested = True
+            st.session_state.pop("discovery_scan_result", None)
+            run_alpha_discovery_scan.clear()
 
-    if not st.session_state.get("discovery_scan_requested", False):
+    scan_result = st.session_state.get("discovery_scan_result")
+    has_saved_result = isinstance(scan_result, tuple) and len(scan_result) == 5 and scan_result[0] == max_symbols
+    if not st.session_state.get("discovery_scan_requested", False) and not has_saved_result:
         st.info("버튼을 누르면 후보 스캔을 시작합니다. 초기 로딩을 막기 위해 수동 실행 방식으로 유지합니다.")
         return
 
-    with st.spinner("전체시장 후보를 스캔하는 중입니다. 종목 수에 따라 시간이 걸릴 수 있습니다."):
-        candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
+    if not has_saved_result:
+        with st.spinner("전체시장 후보를 스캔하는 중입니다. 종목 수에 따라 시간이 걸릴 수 있습니다."):
+            candidates, warnings, total, scanned = run_alpha_discovery_scan(refresh_token, max_symbols)
+        st.session_state.discovery_scan_result = (max_symbols, candidates, warnings, total, scanned)
+        st.session_state.discovery_scan_requested = False
+    else:
+        _, candidates, warnings, total, scanned = scan_result
     st.caption(f"전체 {total:,}개 중 {scanned:,}개 스캔 · 후보 {len(candidates)}개")
     if warnings:
         st.warning(" / ".join(warnings[:5]))
@@ -8051,20 +8679,30 @@ def render_signal_outcome_section(
 
     if st.button("저장 신호 사후성과 업데이트", use_container_width=True):
         updated = 0
-        for record in list_recent_signals(SIGNAL_LEDGER_DB, limit=50):
-            hist = load_symbol_history(record.code, refresh_token, periods=260)
+        benchmark_history = load_symbol_history("KS11", refresh_token, periods=520)
+        cost_bps = (float(RISK_DEFAULTS.get("trading_cost_pct", 0.0)) + float(RISK_DEFAULTS.get("slippage_pct", 0.0))) * 100.0
+        for record_row in list_recent_signals(SIGNAL_LEDGER_DB, limit=50):
+            record = signal_record_from_mapping(record_row)
+            hist = load_symbol_history(record.code, refresh_token, periods=520)
             if hist.empty:
                 continue
-            outcome = compute_forward_outcome(record, hist)
-            if outcome is not None:
+            for outcome in compute_forward_outcomes(
+                record,
+                hist,
+                benchmark_history=benchmark_history,
+                cost_bps=cost_bps,
+            ):
+                if outcome.forward_return is None:
+                    continue
                 store_outcome(SIGNAL_LEDGER_DB, outcome)
                 updated += 1
-        st.success(f"{updated}개 신호의 사후 성과를 업데이트했습니다.")
+        st.success(f"{updated}개 기간별 신호 성과를 업데이트했습니다.")
 
     recent = list_recent_signals(SIGNAL_LEDGER_DB, limit=30)
     if not recent:
         st.info("저장된 신호가 없습니다.")
         return
+    normalized_recent = [signal_record_from_mapping(record) for record in recent]
     rows = [
         {
             "일시": record.generated_at[:19],
@@ -8075,7 +8713,7 @@ def render_signal_outcome_section(
             "기대값": "N/A" if record.expected_edge is None else f"{record.expected_edge:+.2f}%",
             "손익비": "N/A" if record.risk_reward_ratio is None else f"{record.risk_reward_ratio:.2f}x",
         }
-        for record in recent
+        for record in normalized_recent
     ]
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
@@ -8162,6 +8800,63 @@ def render_stocks_section(
     st.caption(f"데이터 기준: {last_refresh}")
 
 
+def render_decision_ribbon(
+    snapshot: dict[str, Snapshot],
+    valid_rows: list[dict[str, Any]],
+    code_to_name: dict[str, str],
+    regime: MarketRegimeOutput,
+) -> None:
+    asof_values = [snap.asof for snap in snapshot.values() if snap.asof is not None]
+    latest_asof = max(asof_values) if asof_values else None
+    stale_count = sum(
+        1
+        for snap in snapshot.values()
+        if snap.errors or any("stale" in str(item).lower() or "오래" in str(item) for item in (snap.warnings or []))
+    )
+    priced_watchlist = sum(1 for row in valid_rows if safe_float(getattr(snapshot.get(row["code"]), "last_close", None)) is not None)
+
+    parsed_rows, _ = parse_portfolio_text(str(st.session_state.get("portfolio_holdings_text", "")))
+    holdings = getHoldings(parsed_rows, snapshot, code_to_name, allow_mock=False)
+    risk_usage_text = "계산 불가"
+    risk_detail = "실제 보유종목 입력 필요"
+    risk_alerts = 0
+    if holdings:
+        cash = safe_float(st.session_state.get("portfolio_cash")) or 0.0
+        total = sum(float(item.quantity) * float(item.current_price) for item in holdings) + cash
+        concentration = calculateConcentrationRisk(holdings, total_portfolio_value=total)
+        top_weight = safe_float(concentration.get("topHoldingWeight")) or 0.0
+        max_weight = float(RISK_DEFAULTS.get("max_position_pct", 0.10) or 0.10)
+        risk_usage = top_weight / max_weight * 100 if max_weight > 0 else None
+        risk_usage_text = "계산 불가" if risk_usage is None else f"{risk_usage:.0f}%"
+        risk_detail = f"최대 종목 {top_weight * 100:.1f}% / 허용 {max_weight * 100:.1f}%"
+        risk_alerts += int(top_weight > max_weight)
+        if total > 0 and cash / total < 0.03:
+            risk_alerts += 1
+
+    source_state = "업데이트 필요" if stale_count else "사용 가능"
+    source_tone = "warn" if stale_count else "good"
+    mock_badge = '<span class="pi-badge warn">데모 모드</span>' if mock_data_enabled() else '<span class="pi-badge info">운영 모드</span>'
+    st.html(
+        f"""
+        <section class="decision-report decision-ribbon" aria-label="오늘의 의사결정 리본">
+            <div class="decision-head">
+                <div><div class="insight-kicker">의사결정 리본</div><h2 class="decision-title">오늘의 의사결정 기준</h2></div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;"><span class="pi-badge {source_tone}">{source_state}</span>{mock_badge}</div>
+            </div>
+            <div class="decision-grid">
+                <div class="decision-tile"><small>데이터 기준시각</small><strong>{html.escape(format_kst_datetime(latest_asof))}</strong><span>업데이트 필요 출처 {stale_count}개</span></div>
+                <div class="decision-tile"><small>시장 국면</small><strong>{html.escape(regime_label_ko(regime.regime))} · {regime.score}/100</strong><span>신뢰도 {regime.confidence}/100</span></div>
+                <div class="decision-tile"><small>위험예산 사용률</small><strong>{html.escape(risk_usage_text)}</strong><span>{html.escape(risk_detail)}</span></div>
+                <div class="decision-tile"><small>가격 확인 종목</small><strong>{priced_watchlist}개</strong><span>관심종목 {len(valid_rows)}개 중 실제 가격 확인</span></div>
+                <div class="decision-tile"><small>보유 위험 경보</small><strong>{risk_alerts if holdings else '계산 불가'}</strong><span>{'집중도·현금 기준' if holdings else '실제 보유종목 입력 필요'}</span></div>
+                <div class="decision-tile"><small>예정 공시·이벤트</small><strong>별도 확인</strong><span>DART 실제 조회 성공 시 집계</span></div>
+                <div class="decision-tile"><small>오늘 검토 행동</small><strong>{len(regime.allowed_actions)}개</strong><span>{html.escape(' · '.join(regime.allowed_actions[:2]))}</span></div>
+            </div>
+        </section>
+        """
+    )
+
+
 def render_dashboard_section(
     snapshot: dict[str, Snapshot],
     valid_rows: list[dict[str, Any]],
@@ -8187,6 +8882,7 @@ def render_dashboard_section(
 
     market_score, market_notes = market_regime(snapshot)
     regime_output = build_market_regime_output(snapshot)
+    render_decision_ribbon(snapshot, valid_rows, code_to_name, regime_output)
     render_action_console(regime_output)
     render_portfolio_risk_cockpit_section(snapshot, code_to_name, refresh_token)
     render_data_trust_source_panel_section(snapshot, code_to_name, refresh_token)
@@ -8446,22 +9142,35 @@ def render_disclosure_section(
 
     if "disclosure_query_applied" not in st.session_state:
         st.session_state.disclosure_query_applied = ""
+    if "disclosure_watchlist_applied" not in st.session_state:
+        st.session_state.disclosure_watchlist_applied = True
+    if "disclosure_limit_applied" not in st.session_state:
+        st.session_state.disclosure_limit_applied = 15
+    if "disclosure_query" not in st.session_state:
+        st.session_state.disclosure_query = st.session_state.disclosure_query_applied
+    if "disclosure_watchlist_only" not in st.session_state:
+        st.session_state.disclosure_watchlist_only = bool(st.session_state.disclosure_watchlist_applied)
+    if "disclosure_limit" not in st.session_state:
+        st.session_state.disclosure_limit = int(st.session_state.disclosure_limit_applied)
 
     with st.form("disclosure_search_form", clear_on_submit=False):
-        filter_watchlist = st.checkbox("관심종목만 보기", value=True, key="disclosure_watchlist_only")
+        filter_watchlist = st.checkbox("관심종목만 보기", key="disclosure_watchlist_only")
         query = st.text_input(
             "회사명, 종목코드, 공시명 검색",
             placeholder="예: 두산에너빌리티, 유상증자, 감사의견",
             key="disclosure_query",
         )
-        limit = st.slider("표시 개수", min_value=5, max_value=40, value=15, step=5, key="disclosure_limit")
+        limit = st.slider("표시 개수", min_value=5, max_value=40, step=5, key="disclosure_limit")
         search_submit = st.form_submit_button("검색")
 
     if search_submit:
         st.session_state.disclosure_query_applied = query.strip()
+        st.session_state.disclosure_watchlist_applied = bool(filter_watchlist)
+        st.session_state.disclosure_limit_applied = int(limit)
 
     applied_query = st.session_state.disclosure_query_applied.strip()
-    applied_watchlist = filter_watchlist
+    applied_watchlist = bool(st.session_state.disclosure_watchlist_applied)
+    limit = int(st.session_state.disclosure_limit_applied)
 
     filtered = dart_df.copy()
     if applied_watchlist and not filtered.empty:
@@ -8497,8 +9206,17 @@ def render_disclosure_section(
     summary_cols[1].metric("표시", f"{len(filtered):,}")
     summary_cols[2].metric("관심종목", f"{len(watch_names):,}")
     summary_cols[3].metric("분류", "규칙 기반")
-    api_state = "미설정" if not DART_API_KEY else "연결"
-    st.caption(f"DART API 상태: {api_state} · 데이터 기준: {last_refresh}")
+    dart_status = str(dart_df.attrs.get("provider_status", "empty"))
+    dart_source = str(dart_df.attrs.get("source", "DART"))
+    dart_status_label = {
+        "ready": "OpenDART 사용 가능",
+        "fallback": "공개 페이지 보조 데이터",
+        "missing_key": "API 키 미설정",
+        "empty": "응답 데이터 없음",
+        "error": "연결 확인 필요",
+    }.get(dart_status, "상태 확인 필요")
+    dart_fetched_at = format_kst_datetime(dart_df.attrs.get("fetched_at"), last_refresh)
+    st.caption(f"DART 상태: {dart_status_label} · 출처: {dart_source} · 수집 시각: {dart_fetched_at}")
     if applied_query:
         st.caption(f"검색어: {applied_query}")
 
@@ -8563,13 +9281,72 @@ def render_disclosure_section(
             unsafe_allow_html=True,
         )
 
+MAIN_VIEW_SLUGS = {
+    "대시보드": "dashboard",
+    "포트폴리오": "portfolio",
+    "종목": "stocks",
+    "알파 후보 탐색": "alpha-discovery",
+    "공시": "disclosures",
+    "매크로": "macro",
+    "브리핑": "briefing",
+    "신호 성과": "signal-outcome",
+    "설정": "settings",
+}
+MAIN_VIEW_LABELS = tuple(MAIN_VIEW_SLUGS)
+MAIN_VIEW_BY_SLUG = {slug: label for label, slug in MAIN_VIEW_SLUGS.items()}
+
+
+def _query_param_scalar(key: str) -> str:
+    value = st.query_params.get(key, "")
+    if isinstance(value, (list, tuple)):
+        return str(value[0]) if value else ""
+    return str(value or "")
+
+
+def render_view_safely(label: str, renderer: Any) -> None:
+    try:
+        renderer()
+    except Exception as exc:
+        st.error(f"{label} 화면을 표시하는 중 오류가 발생했습니다. 다른 화면은 계속 사용할 수 있습니다.")
+        st.caption("데이터 새로고침 후에도 반복되면 데이터 출처 상태를 확인하세요.")
+        if config_bool("STANCE_DEBUG_ERRORS", False):
+            st.code(sanitize_secret_text(str(exc)))
+
+
+def select_main_view() -> str:
+    requested_slug = _query_param_scalar("view")
+    requested_view = MAIN_VIEW_BY_SLUG.get(requested_slug)
+    previous_query_slug = str(st.session_state.get("main_view_query_slug", ""))
+    current_view = st.session_state.get("main_view_selector")
+    if requested_view is not None and requested_slug != previous_query_slug and current_view != requested_view:
+        st.session_state.main_view_selector = requested_view
+    nav_default = (requested_view or "대시보드") if "main_view_selector" not in st.session_state else None
+    selected_view = st.segmented_control(
+        "주요 화면",
+        MAIN_VIEW_LABELS,
+        default=nav_default,
+        key="main_view_selector",
+        label_visibility="hidden",
+        width="stretch",
+    ) or "대시보드"
+    selected_slug = MAIN_VIEW_SLUGS[selected_view]
+    if _query_param_scalar("view") != selected_slug:
+        st.query_params["view"] = selected_slug
+    st.session_state.main_view_query_slug = selected_slug
+    st.html(
+        f'<p class="stance-sr-only" role="status" aria-live="polite">현재 화면: {html.escape(selected_view)}</p>'
+    )
+    return selected_view
 
 
 def main() -> None:
-    st.markdown('<div class="hero-title">Stance Stock Strategy</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="hero-subtitle">한국 시장, 포트폴리오 리스크, 종목 검토 흐름을 하나로 연결한 투자 의사결정 대시보드입니다.</div>',
-        unsafe_allow_html=True,
+    st.html(
+        """
+        <header class="stance-hero" aria-labelledby="stance-app-title">
+            <h1 id="stance-app-title" class="hero-title">Stance Stock Strategy</h1>
+            <p class="hero-subtitle">한국 시장, 포트폴리오 리스크, 종목 검토 흐름을 하나로 연결한 투자 의사결정 대시보드입니다.</p>
+        </header>
+        """
     )
 
     if fdr is None:
@@ -8621,15 +9398,41 @@ def main() -> None:
         )
 
         with st.expander("리스크 기본값"):
-            RISK_DEFAULTS["risk_per_trade_pct"] = st.slider("1회 거래 최대 손실(%)", 0.05, 2.0, float(RISK_DEFAULTS["risk_per_trade_pct"] * 100), 0.05) / 100
-            RISK_DEFAULTS["max_position_pct"] = st.slider("단일 종목 최대 비중(%)", 1.0, 30.0, float(RISK_DEFAULTS["max_position_pct"] * 100), 0.5) / 100
-            RISK_DEFAULTS["trading_cost_pct"] = st.slider("거래 비용/세금(%)", 0.0, 2.0, float(RISK_DEFAULTS["trading_cost_pct"]), 0.05)
-            RISK_DEFAULTS["slippage_pct"] = st.slider("슬리피지(%)", 0.0, 2.0, float(RISK_DEFAULTS["slippage_pct"]), 0.05)
+            risk_per_trade_default = max(5, min(200, int(round(RISK_DEFAULTS["risk_per_trade_pct"] * 10_000 / 5) * 5)))
+            max_position_default = max(100, min(3_000, int(round(RISK_DEFAULTS["max_position_pct"] * 10_000 / 50) * 50)))
+            trading_cost_default = max(0, min(200, int(round(RISK_DEFAULTS["trading_cost_pct"] * 100 / 5) * 5)))
+            slippage_default = max(0, min(200, int(round(RISK_DEFAULTS["slippage_pct"] * 100 / 5) * 5)))
+            risk_per_trade_bps = st.slider("1회 거래 최대 손실(bp)", 5, 200, risk_per_trade_default, 5)
+            max_position_bps = st.slider("단일 종목 최대 비중(bp)", 100, 3_000, max_position_default, 50)
+            trading_cost_bps = st.slider("거래 비용·세금(bp)", 0, 200, trading_cost_default, 5)
+            slippage_bps = st.slider("슬리피지(bp)", 0, 200, slippage_default, 5)
+            RISK_DEFAULTS["risk_per_trade_pct"] = risk_per_trade_bps / 10_000
+            RISK_DEFAULTS["max_position_pct"] = max_position_bps / 10_000
+            RISK_DEFAULTS["trading_cost_pct"] = trading_cost_bps / 100
+            RISK_DEFAULTS["slippage_pct"] = slippage_bps / 100
+            st.caption("100bp = 1%")
 
         refresh_clicked = st.button("데이터 새로고침", use_container_width=True)
         if refresh_clicked:
-            st.session_state.refresh_token += 1
-            st.rerun()
+            refresh_allowed, remaining = acquire_session_cooldown(
+                "data_refresh_last_at",
+                DATA_REFRESH_COOLDOWN_SECONDS,
+            )
+            if refresh_allowed:
+                st.session_state.refresh_token += 1
+                st.rerun()
+            else:
+                st.warning(f"중복 데이터 요청을 막기 위해 {remaining}초 후 다시 새로고침할 수 있습니다.")
+
+    selected_view = select_main_view()
+    lightweight_renderers = {
+        "알파 후보 탐색": lambda: render_alpha_discovery_section(st.session_state.refresh_token),
+        "매크로": lambda: render_ecos_cards(st.session_state.refresh_token),
+        "설정": render_settings_section,
+    }
+    if selected_view in lightweight_renderers:
+        render_view_safely(selected_view, lightweight_renderers[selected_view])
+        return
 
     codes, invalid_tokens = parse_code_input(code_text)
     if len(codes) > 15:
@@ -8657,30 +9460,49 @@ def main() -> None:
         st.info("유효한 종목코드가 없어 기본 관심종목을 표시합니다.")
         valid_rows = [{"code": code, "name": STOCK_UNIVERSE_NAME_HINTS.get(code, code)} for code in DEFAULT_CODES[:5]]
 
-    watch_codes = tuple(row["code"] for row in valid_rows)
+    last_refresh = now_kst().strftime("%Y.%m.%d %H:%M")
+    if selected_view == "공시":
+        render_view_safely(
+            selected_view,
+            lambda: render_disclosure_section(
+                valid_rows,
+                code_to_name,
+                st.session_state.refresh_token,
+                last_refresh,
+            ),
+        )
+        return
+
+    portfolio_rows_for_snapshot, _ = parse_portfolio_text(
+        str(st.session_state.get("portfolio_holdings_text", ""))
+    )
+    watch_codes = tuple(
+        dict.fromkeys(
+            [row["code"] for row in valid_rows]
+            + [str(row.get("code")) for row in portfolio_rows_for_snapshot if row.get("code")]
+        )
+    )
     snapshot = load_market_snapshot(st.session_state.refresh_token, watch_codes)
-    ref_date_candidates = [snap.asof for snap in snapshot.values() if snap.asof is not None]
-    ref_date = max(ref_date_candidates).strftime("%Y-%m-%d") if ref_date_candidates else datetime.now().strftime("%Y-%m-%d")
-    last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    tabs = st.tabs(["대시보드", "포트폴리오", "종목", "알파 후보 탐색", "공시", "매크로", "브리핑", "신호 성과", "설정"])
-    with tabs[0]:
-        render_dashboard_section(snapshot, valid_rows, code_to_name, ref_date, last_refresh, st.session_state.refresh_token)
-    with tabs[1]:
-        render_portfolio_section(snapshot, code_to_name, st.session_state.refresh_token, last_refresh)
-    with tabs[2]:
-        render_stocks_section(snapshot, valid_rows, code_to_name, st.session_state.refresh_token, last_refresh)
-    with tabs[3]:
-        render_alpha_discovery_section(st.session_state.refresh_token)
-    with tabs[4]:
-        render_disclosure_section(valid_rows, code_to_name, st.session_state.refresh_token, last_refresh)
-    with tabs[5]:
-        render_ecos_cards(st.session_state.refresh_token)
-    with tabs[6]:
-        render_gpt_briefing_section(snapshot, valid_rows, code_to_name, ref_date, last_refresh, st.session_state.refresh_token)
-    with tabs[7]:
-        render_signal_outcome_section(snapshot, valid_rows, code_to_name, st.session_state.refresh_token)
-    with tabs[8]:
-        render_settings_section()
+    ref_date_candidates: list[pd.Timestamp] = []
+    for snap in snapshot.values():
+        if snap.asof is None:
+            continue
+        try:
+            stamp = pd.Timestamp(snap.asof)
+            stamp = stamp.tz_localize(KST) if stamp.tzinfo is None else stamp.tz_convert(KST)
+            ref_date_candidates.append(stamp)
+        except Exception:
+            continue
+    ref_date = max(ref_date_candidates).strftime("%Y-%m-%d") if ref_date_candidates else now_kst().strftime("%Y-%m-%d")
+
+    renderers = {
+        "대시보드": lambda: render_dashboard_section(snapshot, valid_rows, code_to_name, ref_date, last_refresh, st.session_state.refresh_token),
+        "포트폴리오": lambda: render_portfolio_section(snapshot, code_to_name, st.session_state.refresh_token, last_refresh),
+        "종목": lambda: render_stocks_section(snapshot, valid_rows, code_to_name, st.session_state.refresh_token, last_refresh),
+        "브리핑": lambda: render_gpt_briefing_section(snapshot, valid_rows, code_to_name, ref_date, last_refresh, st.session_state.refresh_token),
+        "신호 성과": lambda: render_signal_outcome_section(snapshot, valid_rows, code_to_name, st.session_state.refresh_token),
+    }
+    render_view_safely(selected_view, renderers[selected_view])
 
 
 if __name__ == "__main__":

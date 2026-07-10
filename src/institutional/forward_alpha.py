@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 from math import isfinite
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo
 
 from .dart_catalysts import build_dart_disclosure_catalyst_panel
 from .flow_short_pressure import build_smart_money_flow_short_pressure_panel
@@ -37,6 +38,7 @@ SEVERE_RISK_FLAGS = {
     "liquidity_risk",
 }
 VALUE_UP_CATEGORIES = {"share_buyback", "treasury_stock_cancellation", "dividend_increase", "value_up_plan"}
+KST = ZoneInfo("Asia/Seoul")
 
 
 def _now_iso(now: datetime | None = None) -> str:
@@ -61,6 +63,7 @@ def _clamp(value: float, low: float, high: float) -> float:
 def _as_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
+    text = str(value).strip()
     if isinstance(value, datetime):
         stamp = value
     else:
@@ -68,11 +71,14 @@ def _as_datetime(value: Any) -> datetime | None:
             if hasattr(value, "to_pydatetime"):
                 stamp = value.to_pydatetime()
             else:
-                stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except (TypeError, ValueError):
             return None
     if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
+        if len(text) == 10 and text[4:5] == "-" and text[7:8] == "-":
+            stamp = stamp.replace(hour=23, minute=59, second=59, tzinfo=KST)
+        else:
+            stamp = stamp.replace(tzinfo=KST)
     return stamp
 
 
@@ -95,11 +101,26 @@ def validate_no_label_leakage(feature_available_at: Any, prediction_as_of: Any, 
     return feature_stamp <= prediction_stamp <= label_stamp
 
 
-def _source_meta_for_rows(rows: Iterable[Any], *, now: datetime | None, stale: bool, missing: bool, fallback: bool) -> DataSourceMeta:
+def _source_meta_for_rows(
+    rows: Iterable[Any],
+    *,
+    now: datetime | None,
+    stale: bool,
+    missing: bool,
+    fallback: bool,
+    additional_metas: Iterable[DataSourceMeta] = (),
+) -> DataSourceMeta:
     metas = [getattr(row, "meta", None) for row in rows if getattr(row, "meta", None) is not None]
+    metas.extend(meta for meta in additional_metas if meta is not None)
     confidence_values = [(meta.confidence_score or meta.quality_score) for meta in metas]
     confidence = int(round(sum(confidence_values) / len(confidence_values))) if confidence_values else 0
-    latest_available = max((meta.available_at or meta.as_of_date or "" for meta in metas), default=None) or None
+    available_stamps = [
+        stamp
+        for meta in metas
+        if (stamp := _as_datetime(meta.available_at or meta.as_of_date or meta.fetched_at)) is not None
+    ]
+    latest_stamp = max(available_stamps) if available_stamps else None
+    latest_available = latest_stamp.isoformat(timespec="seconds") if latest_stamp is not None else None
     source_names = sorted({str(meta.source) for meta in metas if meta.source})
     return DataSourceMeta(
         source=" + ".join(source_names[:4]) if source_names else "Forward alpha feature stack",
@@ -118,6 +139,27 @@ def _source_meta_for_rows(rows: Iterable[Any], *, now: datetime | None, stale: b
         missing_data_flag=missing,
         warnings=tuple(["baseline_rule_score_only"]),
     )
+
+
+def _regime_feature_metas(state: MarketRegimeMacroRadarState) -> tuple[DataSourceMeta, ...]:
+    metas: list[DataSourceMeta] = []
+    seen: set[tuple[str, str | None, str | None]] = set()
+    for collection in (
+        state.data_points,
+        state.macro_heatmap,
+        state.sector_tailwinds,
+        state.recent_changes,
+    ):
+        for item in collection:
+            meta = getattr(item, "meta", None)
+            if meta is None:
+                continue
+            identity = (str(meta.source), meta.available_at, meta.source_table_or_endpoint)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            metas.append(meta)
+    return tuple(metas)
 
 
 def _valuation_score(row: ValuationMetricRow | None) -> tuple[int | None, list[str], list[str]]:
@@ -323,7 +365,13 @@ def _build_rank_rows(
     quality_map = _safe_rows_by_code(quality_state.quality_rows, now=now)
     flow_map = _safe_rows_by_code(flow_state.flow_rows, now=now)
     dart_events = tuple(row for row in dart_state.event_rows if getattr(row, "meta", None) is None or _meta_is_point_in_time_safe(row.meta, now))
-    codes = sorted(set(valuation_map) | set(quality_map) | set(flow_map) | {row.code for row in dart_events})
+    regime_metas = _regime_feature_metas(regime_state)
+    regime_is_point_in_time_safe = bool(regime_metas) and all(
+        _meta_is_point_in_time_safe(meta, now) for meta in regime_metas
+    )
+    used_regime_metas = regime_metas if regime_is_point_in_time_safe else ()
+    candidate_codes = set(valuation_map) | set(quality_map) | set(flow_map) | {row.code for row in dart_events}
+    codes = sorted(code for code in candidate_codes if code.isdigit() and len(code) == 6)
     rows: list[ForwardAlphaRankRow] = []
     for code in codes:
         valuation = valuation_map.get(code)
@@ -332,6 +380,13 @@ def _build_rank_rows(
         event = _latest_event(dart_events, code)
         name = str(getattr(valuation, "name", "") or getattr(quality, "name", "") or getattr(flow, "name", "") or getattr(event, "name", "") or code)
         sector = str(getattr(valuation, "sector", "") or getattr(quality, "sector", "") or getattr(flow, "sector", "") or "Unclassified")
+        market = str(
+            getattr(valuation, "market", "")
+            or getattr(quality, "market", "")
+            or getattr(flow, "market", "")
+            or getattr(event, "market", "")
+            or "UNKNOWN"
+        ).upper()
         positive_drivers: list[str] = []
         negative_drivers: list[str] = []
         risk_flags: list[str] = []
@@ -351,9 +406,15 @@ def _build_rank_rows(
         positive_drivers.extend(pos)
         negative_drivers.extend(neg)
         risk_flags.extend(risks)
-        macro_score, pos, neg = _macro_score(sector, regime_state)
-        positive_drivers.extend(pos)
-        negative_drivers.extend(neg)
+        if regime_is_point_in_time_safe:
+            macro_score, pos, neg = _macro_score(sector, regime_state)
+            positive_drivers.extend(pos)
+            negative_drivers.extend(neg)
+        else:
+            macro_score = None
+            negative_drivers.append("macro regime unavailable at prediction time")
+            if regime_metas:
+                risk_flags.append("future_macro_data_excluded")
 
         feature_values = {
             "valuation_score": valuation_score,
@@ -366,9 +427,10 @@ def _build_rank_rows(
             "liquidity_score": liquidity_score,
         }
         available_features = [value for value in feature_values.values() if value is not None]
-        stale_metas = [getattr(row, "meta", None) for row in (valuation, quality, flow, event) if getattr(row, "meta", None) is not None and row.meta.stale_data_flag]
-        fallback_metas = [getattr(row, "meta", None) for row in (valuation, quality, flow, event) if getattr(row, "meta", None) is not None and row.meta.is_fallback]
-        all_metas = [getattr(row, "meta", None) for row in (valuation, quality, flow, event) if getattr(row, "meta", None) is not None]
+        row_metas = [getattr(row, "meta", None) for row in (valuation, quality, flow, event) if getattr(row, "meta", None) is not None]
+        all_metas = [*row_metas, *used_regime_metas]
+        stale_metas = [meta for meta in all_metas if meta.stale_data_flag]
+        fallback_metas = [meta for meta in all_metas if meta.is_fallback]
         meta_confidence = sum((meta.confidence_score or meta.quality_score) for meta in all_metas) / len(all_metas) if all_metas else 0.0
         if stale_metas:
             risk_flags.append("stale_data_risk")
@@ -396,19 +458,25 @@ def _build_rank_rows(
         rating = apply_high_risk_override(rating_from_score(final_score, confidence), risk_flags)
         used_rows = [row for row in (valuation, quality, flow, event) if row is not None]
         stale_warning = "One or more feature sources are stale; candidate ratings are capped by risk override." if stale_metas else None
-        snapshot = _snapshot_id([SCORE_VERSION, code] + [getattr(row.meta, "available_at", "") or getattr(row.meta, "as_of_date", "") or "" for row in used_rows])
+        snapshot = _snapshot_id(
+            [SCORE_VERSION, code]
+            + [getattr(row.meta, "available_at", "") or getattr(row.meta, "as_of_date", "") or "" for row in used_rows]
+            + [meta.available_at or meta.as_of_date or "" for meta in used_regime_metas]
+        )
         meta = _source_meta_for_rows(
             used_rows,
             now=now,
             stale=bool(stale_metas),
             missing=len(available_features) < 5,
             fallback=bool(fallback_metas),
+            additional_metas=used_regime_metas,
         )
         rows.append(
             ForwardAlphaRankRow(
                 code=code,
                 name=name,
                 sector=sector,
+                market=market,
                 final_alpha_score=final_score,
                 confidence_score=confidence,
                 rating=rating,  # type: ignore[arg-type]

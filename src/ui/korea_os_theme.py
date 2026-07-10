@@ -93,10 +93,7 @@ body,
 }
 
 .stApp {
-    background:
-        radial-gradient(circle at 8% 0%, rgba(139, 92, 246, 0.16), transparent 26%),
-        radial-gradient(circle at 92% 8%, rgba(56, 189, 248, 0.08), transparent 23%),
-        linear-gradient(135deg, var(--stance-bg), #0B1020 56%, #120B24) !important;
+    background: var(--stance-bg) !important;
 }
 
 [data-testid="stHeader"] {
@@ -1418,10 +1415,102 @@ body,
     gap: 8px;
 }
 
+.stApp [role="radiogroup"] button[data-testid*="segmented_control"] {
+    flex: 1 1 110px;
+    width: auto !important;
+    min-width: 88px;
+    min-height: 40px;
+    color: var(--stance-text-secondary) !important;
+    background: var(--stance-card-bg-soft) !important;
+    border: 1px solid var(--stance-border-default) !important;
+    border-radius: 8px !important;
+    box-shadow: none !important;
+}
+
+.stApp [role="radiogroup"] button[data-testid*="segmented_control"] p,
+.stApp [role="radiogroup"] button[data-testid*="segmented_control"] span,
+.stApp [role="radiogroup"] button[data-testid*="segmented_control"] div {
+    color: var(--stance-text-secondary) !important;
+    font-weight: 720 !important;
+}
+
+.stApp [role="radiogroup"] button[data-testid*="segmented_control"]:hover {
+    color: var(--stance-text-primary) !important;
+    background: var(--stance-surface-elevated) !important;
+    border-color: rgba(167, 139, 250, 0.52) !important;
+}
+
+.stApp [role="radiogroup"] button[data-testid="stBaseButton-segmented_controlActive"] {
+    color: var(--stance-text-primary) !important;
+    background: rgba(139, 92, 246, 0.20) !important;
+    border-color: #A78BFA !important;
+}
+
+.stApp [role="radiogroup"] button[data-testid="stBaseButton-segmented_controlActive"] p,
+.stApp [role="radiogroup"] button[data-testid="stBaseButton-segmented_controlActive"] span,
+.stApp [role="radiogroup"] button[data-testid="stBaseButton-segmented_controlActive"] div {
+    color: var(--stance-text-primary) !important;
+}
+
+.stApp [role="radiogroup"] button[data-testid*="segmented_control"]:focus-visible {
+    outline: 2px solid var(--stance-focus-ring) !important;
+    outline-offset: 2px !important;
+}
+
 .stApp [role="radiogroup"] label {
     min-width: 0;
     max-width: 100%;
     padding: 6px 11px !important;
+}
+
+.stance-sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+.st-key-main_view_selector [role="radiogroup"] {
+    display: grid !important;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.st-key-main_view_selector [role="radiogroup"] button[data-testid*="segmented_control"] {
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+.st-key-main_view_selector [role="radiogroup"] button[data-testid*="segmented_control"] p,
+.st-key-main_view_selector [role="radiogroup"] button[data-testid*="segmented_control"] span {
+    overflow-wrap: anywhere;
+    word-break: keep-all;
+}
+
+@media (max-width: 1280px) {
+    .st-key-main_view_selector [role="radiogroup"] {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 768px) {
+    .stApp [role="radiogroup"] button[data-testid*="segmented_control"] {
+        flex: 1 1 calc(33.333% - 8px);
+        min-width: 96px;
+        padding: 7px 8px !important;
+    }
+}
+
+@media (max-width: 420px) {
+    .stApp [role="radiogroup"] button[data-testid*="segmented_control"] {
+        min-width: 92px;
+        font-size: 12.5px !important;
+    }
 }
 
 .stApp [data-testid="stTabs"] [role="tablist"] {

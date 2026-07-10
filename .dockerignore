@@ -14,3 +14,8 @@ briefings/
 *.sqlite3
 *.db
 *.log
+.deploy_tmp/
+deploy_staging/
+dist/
+patches/
+update1_backup_*/

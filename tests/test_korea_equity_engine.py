@@ -123,6 +123,9 @@ class KoreaEquityEngineTests(unittest.TestCase):
         data = getKoreaDashboardData({"limit": 5})
         self.assertTrue(data["topCandidates"])
         self.assertTrue(data["backtest"])
+        self.assertIsNone(data["backtest"].cagr)
+        self.assertIsNone(data["backtest"].sharpe_ratio)
+        self.assertTrue(any("validation_unavailable" in note for note in data["backtest"].notes))
 
     def test_formatting_helpers_never_render_invalid_numbers(self) -> None:
         self.assertEqual(safeDisplay(float("inf")), "-")

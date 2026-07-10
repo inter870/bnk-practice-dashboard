@@ -4,12 +4,16 @@ import unittest
 
 from src.ui.korean_labels import (
     action_label,
+    alpha_driver_label,
     asset_class_label,
     ko_sentence,
     module_title,
     rating_label,
+    risk_flag_label,
+    sector_label,
     source_meta_line,
     status_label,
+    stock_name_label,
 )
 
 
@@ -25,6 +29,15 @@ class KoreanLabelsTests(unittest.TestCase):
         self.assertEqual("비중 확대", action_label("ADD"))
         self.assertEqual("투자 제외", action_label("EXCLUDE"))
 
+    def test_forward_alpha_visible_labels_are_korean(self) -> None:
+        self.assertEqual("삼성전자", stock_name_label("Samsung Electronics"))
+        self.assertEqual("은행·보험", sector_label("Banks / Insurance"))
+        self.assertEqual("펀더멘털 품질 우수", alpha_driver_label("high fundamental quality"))
+        self.assertEqual("긍정 공시 촉매: 자사주 소각", alpha_driver_label("positive DART catalyst: treasury_stock_cancellation"))
+        self.assertEqual("부정 공시 리스크: 실적 쇼크", alpha_driver_label("negative DART risk: earnings_shock"))
+        self.assertEqual("매크로 순풍: 수출 수요", alpha_driver_label("macro tailwind: export demand"))
+        self.assertEqual("중대 희석 위험", risk_flag_label("severe_dilution_risk"))
+
     def test_status_and_asset_class_labels(self) -> None:
         self.assertEqual("업데이트 필요", status_label("stale"))
         self.assertEqual("데모 데이터", status_label("mock"))
@@ -36,6 +49,20 @@ class KoreanLabelsTests(unittest.TestCase):
             ko_sentence("Check ownership, concentration, liquidity, cash buffer, and data freshness before adding capital."),
         )
         self.assertEqual("2개 오래된 출처는 갱신이 필요합니다.", ko_sentence("2 stale source(s) need refresh."))
+        self.assertEqual("중립", ko_sentence("NEUTRAL"))
+        self.assertEqual("환율 압력 높음", ko_sentence("HIGH_FX_PRESSURE"))
+        self.assertEqual(
+            "시점 기준을 충족하는 랭킹 특징 데이터가 없습니다.",
+            ko_sentence("No point-in-time feature rows are available for ranking."),
+        )
+        self.assertEqual(
+            "환율은 맥락 지표이며 매출 통화 구성, 환헤지, 원재료 비용을 별도로 확인해야 합니다.",
+            ko_sentence("FX is a context input only; revenue mix, hedging, and input costs must be checked separately."),
+        )
+        self.assertEqual(
+            "할인율 상승은 성장주의 밸류에이션 배수에 부담을 줄 수 있습니다.",
+            ko_sentence("Higher discount rates can pressure valuation multiples for growth stocks."),
+        )
 
     def test_source_meta_line_is_korean(self) -> None:
         class Meta:

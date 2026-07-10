@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 
-DataStatus = Literal["loading", "ready", "empty", "error", "stale"]
+DataStatus = Literal["loading", "ready", "empty", "error", "stale", "planned", "mock"]
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -26,9 +27,50 @@ class DataSourceMeta:
     missing_data_flag: bool = False
     warnings: tuple[str, ...] = field(default_factory=tuple)
     errors: tuple[str, ...] = field(default_factory=tuple)
+    published_at: str | None = None
+    timezone: str | None = None
+    currency: str | None = None
+    data_mode: str = "unavailable"
+    quality_flags: tuple[str, ...] = field(default_factory=tuple)
+    provider_version: str | None = None
+    error_code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class ProviderResult(Generic[T]):
+    data: T | None
+    meta: DataSourceMeta
+    status: DataStatus = "ready"
+    warnings: tuple[str, ...] = field(default_factory=tuple)
+    errors: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def ok(self) -> bool:
+        return self.data is not None and self.status in {"ready", "stale"} and not self.errors
+
+    @property
+    def value(self) -> T | None:
+        """Compatibility alias for providers that call their payload value."""
+        return self.data
+
+    @property
+    def metadata(self) -> DataSourceMeta:
+        return self.meta
+
+    def to_dict(self) -> dict[str, Any]:
+        data = self.data
+        if hasattr(data, "to_dict"):
+            data = data.to_dict()  # type: ignore[union-attr]
+        return {
+            "data": data,
+            "meta": self.meta.to_dict(),
+            "status": self.status,
+            "warnings": list(self.warnings),
+            "errors": list(self.errors),
+        }
 
 
 @dataclass(frozen=True)
@@ -904,6 +946,7 @@ class ForwardAlphaRankRow:
     code: str
     name: str
     sector: str
+    market: str
     final_alpha_score: int
     confidence_score: int
     rating: Literal["STRONG_BUY_CANDIDATE", "BUY_CANDIDATE", "WATCH", "HOLD", "AVOID", "HIGH_RISK_EXCLUDE"]
@@ -929,6 +972,7 @@ class ForwardAlphaRankRow:
             "code": self.code,
             "name": self.name,
             "sector": self.sector,
+            "market": self.market,
             "final_alpha_score": self.final_alpha_score,
             "confidence_score": self.confidence_score,
             "rating": self.rating,

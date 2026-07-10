@@ -74,13 +74,15 @@ class SourceRegistryFallbackTests(unittest.TestCase):
         self.assertEqual("adapter_missing", flow.status)
         self.assertEqual("adapter_missing", short.status)
 
-    def test_financials_and_disclosures_do_not_use_opendart_without_key(self) -> None:
+    def test_financials_require_key_but_disclosures_can_use_public_page_fallback(self) -> None:
         financials = resolve_best_data_source("financial_statements", env_status={"OPENDART_API_KEY": False})
         disclosures = resolve_best_data_source("dart_disclosures", env_status={"OPENDART_API_KEY": False})
         self.assertEqual("missing_key", financials.status)
-        self.assertEqual("missing_key", disclosures.status)
         self.assertEqual(("OPENDART_API_KEY",), financials.missing_keys)
+        self.assertEqual("connected", disclosures.status)
+        self.assertEqual("dart_public_disclosures", disclosures.selected_source.source_id)
         self.assertEqual(("OPENDART_API_KEY",), disclosures.missing_keys)
+        self.assertEqual("public_snapshot", disclosures.accuracy_grade)
 
     def test_manual_holdings_preferred_over_mock(self) -> None:
         result = resolve_best_data_source(

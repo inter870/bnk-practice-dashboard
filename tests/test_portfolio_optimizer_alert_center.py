@@ -45,6 +45,7 @@ def alpha_row(
     score: int,
     *,
     sector: str = "Tech",
+    market: str = "KOSPI",
     rating: str = "BUY_CANDIDATE",
     liquidity: int = 80,
     risk_flags: tuple[str, ...] = (),
@@ -54,6 +55,7 @@ def alpha_row(
         code=code,
         name=f"Stock {code}",
         sector=sector,
+        market=market,
         final_alpha_score=score,
         confidence_score=82,
         rating=rating,  # type: ignore[arg-type]
@@ -94,6 +96,22 @@ def alpha_state(rows: tuple[ForwardAlphaRankRow, ...]) -> ForwardAlphaRankingPan
 
 
 class PortfolioOptimizerAlertCenterTests(unittest.TestCase):
+    def test_identical_unscored_holdings_are_scaled_without_ticker_order_bias(self):
+        holdings = [
+            {
+                "code": f"{index:06d}",
+                "name": f"종목 {index}",
+                "market": "KOSPI",
+                "sector": f"섹터 {index}",
+                "current_weight": 1 / 15,
+            }
+            for index in range(1, 16)
+        ]
+        targets = optimize_target_weights([], holdings=holdings)
+
+        self.assertEqual(len(set(targets.values())), 1)
+        self.assertAlmostEqual(sum(targets.values()), 0.95, places=5)
+
     def test_optimizer_respects_max_weight(self):
         rows = (
             alpha_row("001111", 95, sector="Tech"),
@@ -103,6 +121,19 @@ class PortfolioOptimizerAlertCenterTests(unittest.TestCase):
         targets = optimize_target_weights(rows, constraints=OptimizerConstraints(max_single_stock_weight=0.07, max_sector_weight=0.30))
         self.assertTrue(targets)
         self.assertTrue(all(weight <= 0.07 + 1e-9 for weight in targets.values()))
+
+    def test_unheld_kosdaq_candidate_uses_kosdaq_cap(self):
+        rows = (alpha_row("123456", 95, market="KOSDAQ"),)
+
+        targets = optimize_target_weights(
+            rows,
+            constraints=OptimizerConstraints(
+                max_single_stock_weight=0.07,
+                max_kosdaq_single_stock_weight=0.05,
+            ),
+        )
+
+        self.assertLessEqual(targets["123456"], 0.05 + 1e-9)
 
     def test_severe_risk_stocks_get_zero_target_weight(self):
         rows = (
@@ -121,6 +152,44 @@ class PortfolioOptimizerAlertCenterTests(unittest.TestCase):
         constraints = OptimizerConstraints(illiquid_cap=0.02)
         targets = optimize_target_weights(rows, holdings=holdings, constraints=constraints)
         self.assertLessEqual(targets["008888"], 0.02 + 1e-9)
+
+    def test_existing_holding_without_alpha_is_preserved_and_constrained(self):
+        rows = (alpha_row("001111", 85, sector="Tech"),)
+        holdings = [
+            {
+                "code": "009999",
+                "name": "Unscored Holding",
+                "sector": "Industrials",
+                "market": "KOSPI",
+                "current_weight": 0.12,
+                "current_value": 12_000_000,
+            }
+        ]
+        constraints = OptimizerConstraints(max_single_stock_weight=0.07, cash_buffer=0.05)
+        targets = optimize_target_weights(rows, holdings=holdings, constraints=constraints)
+        self.assertIn("009999", targets)
+        self.assertLessEqual(targets["009999"], 0.07)
+        self.assertLessEqual(sum(targets.values()), 0.95 + 1e-9)
+
+        state = build_portfolio_optimizer_alert_center(
+            alpha_state=alpha_state(rows),
+            holdings=holdings,
+            total_portfolio_value=100_000_000,
+            cash_ratio=0.05,
+            constraints=constraints,
+            allow_mock=False,
+        )
+        unscored = next(row for row in state.recommendation_rows if row.code == "009999")
+        self.assertEqual("TRIM", unscored.action)
+        self.assertIsNone(unscored.final_alpha_score)
+        self.assertIn("alpha_data_unavailable", unscored.risk_flags)
+        self.assertAlmostEqual(
+            sum(row.target_weight for row in state.recommendation_rows) + state.target_cash_ratio,
+            1.0,
+            places=6,
+        )
+        target_cash_point = next(point for point in state.data_points if point.key == "target_cash_ratio")
+        self.assertAlmostEqual(float(target_cash_point.value), state.target_cash_ratio, places=6)
 
     def test_alerts_trigger_correctly(self):
         state = build_portfolio_optimizer_alert_center(

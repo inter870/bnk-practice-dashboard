@@ -455,10 +455,12 @@ def build_data_trust_source_panel(
     portfolio_holding_count: int = 0,
     using_mock_portfolio: bool = False,
     api_key_status: dict[str, bool] | None = None,
+    runtime_source_status: dict[str, dict[str, Any]] | None = None,
     now: datetime | None = None,
     stale_after_hours: float = 24.0,
 ) -> DataTrustSourcePanelState:
     fetched_at = _now_iso(now)
+    runtime_source_status = runtime_source_status or {}
     rows: list[SourceCoverageRow] = []
 
     if portfolio_holding_count > 0 and not using_mock_portfolio:
@@ -593,33 +595,52 @@ def build_data_trust_source_panel(
     )
     disclosure_source = get_source("opendart_disclosures")
     disclosure_missing = missing_required_keys(disclosure_source, api_key_status)
-    disclosure_available = not disclosure_missing
+    disclosure_runtime = runtime_source_status.get("dart_disclosure", {})
+    disclosure_runtime_status = str(disclosure_runtime.get("status") or "unknown")
+    disclosure_usable = bool(disclosure_runtime.get("usable_data"))
+    disclosure_available = not disclosure_missing and disclosure_runtime_status == "ready" and disclosure_usable
+    disclosure_fallback = disclosure_runtime_status == "fallback" and disclosure_usable
+    active_disclosure_source = get_source("dart_public_disclosures") if disclosure_fallback else disclosure_source
+    active_disclosure_missing = () if disclosure_fallback else disclosure_missing
     disclosure_key_message, disclosure_key_action = _key_message(disclosure_source, disclosure_missing)
     rows.append(
         _coverage_row(
             module_key="dart_disclosure",
             label="DART disclosure data",
-            status="partial" if disclosure_available else "missing",
-            connection_status="partially_connected" if disclosure_available else "missing_key",
-            source=disclosure_source.display_name_ko if disclosure_available else "OpenDART 키 필요",
-            endpoint="opendart:list.json",
-            as_of_date=None,
-            available_at=None,
-            fetched_at=fetched_at,
-            quality_score=55 if disclosure_available else 0,
-            confidence_score=50 if disclosure_available else 0,
-            stale=not disclosure_available,
-            missing=not disclosure_available,
-            is_fallback=False,
-            required_api_keys=disclosure_source.required_env_keys,
-            missing_api_keys=disclosure_missing,
-            notes=("공시 시각은 사용 가능 시점으로 처리해야 합니다.", disclosure_key_message),
-            source_definition=disclosure_source,
-            accuracy_grade="unavailable" if not disclosure_available else "official_eod",
-            exactness_level="unavailable" if not disclosure_available else "official_eod",
+            status="available" if disclosure_available else "partial" if disclosure_fallback or not disclosure_missing else "missing",
+            connection_status="connected" if disclosure_available else "fallback" if disclosure_fallback else "partially_connected" if not disclosure_missing else "missing_key",
+            source=(
+                str(disclosure_runtime.get("source") or active_disclosure_source.display_name_ko)
+                if disclosure_fallback or not disclosure_missing
+                else "OpenDART 키 필요"
+            ),
+            endpoint=active_disclosure_source.adapter_id,
+            as_of_date=disclosure_runtime.get("as_of_date"),
+            available_at=disclosure_runtime.get("as_of_date"),
+            fetched_at=str(disclosure_runtime.get("fetched_at") or fetched_at),
+            quality_score=90 if disclosure_available else 60 if disclosure_fallback else 30 if not disclosure_missing else 0,
+            confidence_score=90 if disclosure_available else 55 if disclosure_fallback else 20 if not disclosure_missing else 0,
+            stale=False,
+            missing=not disclosure_usable,
+            is_fallback=disclosure_fallback,
+            required_api_keys=active_disclosure_source.required_env_keys,
+            missing_api_keys=active_disclosure_missing,
+            notes=(
+                "공시 시각은 사용 가능 시점으로 처리해야 합니다.",
+                "OpenDART API는 인증키 설정 후 우선 출처로 사용할 수 있습니다."
+                if disclosure_fallback and disclosure_missing
+                else disclosure_key_message,
+            ),
+            source_definition=active_disclosure_source,
+            accuracy_grade="official_eod" if disclosure_available else "public_snapshot" if disclosure_fallback else "unavailable",
+            exactness_level="official_eod" if disclosure_available else "best_effort" if disclosure_fallback else "unavailable",
             message_ko=(
-                "OpenDART 공시 목록은 연결됐지만 종목별 공시 상세는 별도 조회가 필요합니다."
+                "OpenDART 공시 목록에서 사용 가능한 데이터를 확인했습니다."
                 if disclosure_available
+                else "OpenDART 호출에 실패해 DART 공개 최근공시 페이지를 보조 출처로 사용 중입니다."
+                if disclosure_fallback
+                else "OpenDART 키는 설정됐지만 현재 사용 가능한 공시 응답을 확인하지 못했습니다."
+                if not disclosure_missing
                 else "OpenDART 공시 API 사용을 위해 인증키가 필요합니다."
             ),
             action_required_ko=disclosure_key_action,
@@ -629,33 +650,41 @@ def build_data_trust_source_panel(
     ecos_source = get_source("bok_ecos_macro")
     ecos_required = ecos_source.required_env_keys
     ecos_missing = missing_required_keys(ecos_source, api_key_status)
-    ecos_available = not ecos_missing
+    ecos_runtime = runtime_source_status.get("macro", {})
+    ecos_runtime_status = str(ecos_runtime.get("status") or "unknown")
+    ecos_usable = bool(ecos_runtime.get("usable_data"))
+    ecos_available = not ecos_missing and ecos_runtime_status == "ready" and ecos_usable
+    ecos_stale = bool(ecos_runtime.get("stale_data_flag")) if ecos_available else False
     ecos_key_message, ecos_key_action = _key_message(ecos_source, ecos_missing)
     rows.append(
         _coverage_row(
             module_key="macro",
             label="Macro data",
-            status="partial" if ecos_available else "missing",
-            connection_status="partially_connected" if ecos_available else "missing_key",
-            source=ecos_source.display_name_ko if ecos_available else "BOK ECOS 키 필요",
+            status="available" if ecos_available else "partial" if not ecos_missing else "missing",
+            connection_status="connected" if ecos_available else "partially_connected" if not ecos_missing else "missing_key",
+            source=ecos_source.display_name_ko if not ecos_missing else "BOK ECOS 키 필요",
             endpoint="ecos:KeyStatisticList",
-            as_of_date=None,
-            available_at=None,
-            fetched_at=fetched_at,
-            quality_score=55 if ecos_available else 0,
-            confidence_score=50 if ecos_available else 0,
-            stale=not ecos_available,
-            missing=not ecos_available,
+            as_of_date=ecos_runtime.get("as_of_date"),
+            available_at=ecos_runtime.get("available_at") or ecos_runtime.get("fetched_at"),
+            fetched_at=str(ecos_runtime.get("fetched_at") or fetched_at),
+            quality_score=65 if ecos_stale else 90 if ecos_available else 30 if not ecos_missing else 0,
+            confidence_score=60 if ecos_stale else 90 if ecos_available else 20 if not ecos_missing else 0,
+            stale=ecos_stale,
+            missing=not ecos_usable,
             is_fallback=False,
             required_api_keys=ecos_required,
             missing_api_keys=ecos_missing,
             notes=("매크로 발표 사용 가능 시점을 저장한 뒤 백테스트에 써야 합니다.", ecos_key_message),
             source_definition=ecos_source,
-            accuracy_grade="unavailable" if not ecos_available else "official_eod",
-            exactness_level="unavailable" if not ecos_available else "official_eod",
+            accuracy_grade="official_eod" if ecos_available else "unavailable",
+            exactness_level="official_eod" if ecos_available else "unavailable",
             message_ko=(
-                "BOK ECOS 키는 확인됐지만 핵심 지표 응답 상태는 별도 조회가 필요합니다."
+                "BOK ECOS 응답은 확인했지만 최신 관측일이 신선도 기준을 초과했습니다."
+                if ecos_stale
+                else "BOK ECOS 핵심 지표 응답에서 사용 가능한 데이터를 확인했습니다."
                 if ecos_available
+                else "BOK ECOS 키는 설정됐지만 현재 사용 가능한 응답을 확인하지 못했습니다."
+                if not ecos_missing
                 else "BOK ECOS 공식 API 사용을 위해 인증키가 필요합니다."
             ),
             action_required_ko=ecos_key_action,

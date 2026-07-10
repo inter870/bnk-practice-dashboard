@@ -288,9 +288,9 @@ def _freshness(row: SourceCoverageRow) -> str | None:
 def _confidence(row: SourceCoverageRow) -> str:
     score = row.meta.confidence_score
     if isPlannedAdapter(row):
-        return "신뢰도 N/A"
+        return "신뢰도 해당 없음"
     if score is None:
-        return "신뢰도 N/A"
+        return "신뢰도 확인 불가"
     return f"신뢰도 {max(0, min(100, int(score)))}/100"
 
 

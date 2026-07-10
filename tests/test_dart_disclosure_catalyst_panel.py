@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from src.institutional import (
+    adapt_open_dart_rows,
     build_dart_disclosure_catalyst_panel,
     calculate_dilution_risk_score,
     calculate_materiality_score,
@@ -60,6 +61,49 @@ def disclosure_events(asof: datetime | None = None) -> list[dict[str, object]]:
 
 
 class DARTDisclosureCatalystPanelTests(unittest.TestCase):
+    def test_event_source_fetch_timestamp_is_preserved(self):
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+        state = build_dart_disclosure_catalyst_panel(
+            disclosure_events=[
+                {
+                    "code": "005930",
+                    "name": "삼성전자",
+                    "title": "자기주식 소각 결정",
+                    "available_at": "2026-07-02T09:00:00+09:00",
+                    "fetched_at": "2026-07-02T09:05:00+09:00",
+                    "receipt_no": "202607020001",
+                    "source": "OpenDART",
+                }
+            ],
+            now=now,
+            allow_mock=False,
+        )
+
+        self.assertEqual(state.event_rows[0].meta.fetched_at, "2026-07-02T09:05:00+09:00")
+
+    def test_open_dart_adapter_uses_receipt_date_and_conservative_availability(self):
+        events = adapt_open_dart_rows(
+            [
+                {
+                    "corp_name": "테스트전자",
+                    "report_name": "자기주식 소각 결정",
+                    "date": "20260708",
+                    "stock_code": "5930",
+                    "report_url": "https://dart.fss.or.kr/dsaf001/main.do?rcpNo=202607080001",
+                }
+            ],
+            source="OpenDART list.json",
+            fetched_at="2026-07-08T18:00:00+09:00",
+            is_fallback=False,
+        )
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["code"], "005930")
+        self.assertEqual(events[0]["receipt_date"], "2026-07-08")
+        self.assertTrue(str(events[0]["available_at"]).startswith("2026-07-08T23:59:59"))
+        self.assertEqual(events[0]["receipt_no"], "202607080001")
+        self.assertNotIn("crtfc_key", str(events[0]))
+
     def test_event_classification_positive_and_negative(self):
         positive = classify_disclosure_event({"title": "자사주 취득 신탁계약 체결"})
         negative = classify_disclosure_event({"title": "유상증자 결정"})

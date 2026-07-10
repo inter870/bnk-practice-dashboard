@@ -415,6 +415,29 @@ def serialize_query_context(context: SelectedContext) -> dict[str, str]:
     return query
 
 
+CONTEXT_QUERY_KEYS = frozenset(
+    {
+        "stock",
+        "module",
+        "metric",
+        "factor",
+        "date",
+        "range",
+        "start",
+        "end",
+        "market",
+        "sector",
+        "event",
+        "queue",
+        "backtest",
+        "fearGreedBand",
+        "scenario",
+        "thesis",
+        "riskRule",
+    }
+)
+
+
 def merge_context(context: SelectedContext, **updates: Any) -> SelectedContext:
     values = {key: getattr(context, key, None) for key in SelectedContext.__dataclass_fields__}
     values.update({key: value for key, value in updates.items() if key in values})

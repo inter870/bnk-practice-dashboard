@@ -71,6 +71,15 @@ class PortfolioAnalyticsTests(unittest.TestCase):
         self.assertEqual(high["level"], "High")
         self.assertGreater(calculateTopHoldingWeight(holdings([("stocks", 25), ("stocks", 75)])), 0.2)
 
+    def test_concentration_uses_cash_inclusive_total_when_provided(self):
+        portfolio = holdings([("stocks", 70_000)])
+
+        concentration = calculateConcentrationRisk(portfolio, total_portfolio_value=970_000)
+
+        self.assertAlmostEqual(concentration["topHoldingWeight"], 70_000 / 970_000)
+        self.assertAlmostEqual(concentration["herfindahlIndex"], (70_000 / 970_000) ** 2)
+        self.assertEqual(concentration["level"], "Low")
+
     def test_no_nan_or_infinity_outputs(self):
         allocation = calculateAllocationByAssetClass([{"quantity": 0, "currentPrice": float("nan"), "assetClass": "stocks"}])
         for row in allocation.values():

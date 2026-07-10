@@ -373,7 +373,7 @@ class DataTrustSourcePanelTests(unittest.TestCase):
         self.assertEqual("연결 예정", fields.statusBadgeKo)
         self.assertEqual("표시 불가", fields.accuracyBadgeKo)
         self.assertEqual("키 확인: 어댑터 구현 후 확인", fields.keyStatusKo)
-        self.assertEqual("신뢰도 N/A", fields.confidenceKo)
+        self.assertEqual("신뢰도 해당 없음", fields.confidenceKo)
         self.assertEqual("기준일: 해당 없음", fields.asOfDateKo)
         self.assertIn("밸류에이션 어댑터가 아직 연결되지 않아 정확 수치를 표시할 수 없습니다.", fields.primaryMessageKo)
         self.assertIn("수집 시각: 2026.07.08 17:39", fields.compactLineKo)
@@ -447,7 +447,11 @@ class DataTrustSourcePanelTests(unittest.TestCase):
             self.assertEqual("partially_connected", row.status)
             self.assertEqual("partial", row.coverage_status)
             self.assertFalse(row.meta.stale_data_flag)
-            self.assertFalse(row.meta.missing_data_flag)
+        financial_row = next(row for row in partial_rows if row.module_key == "financial_statement")
+        runtime_rows = [row for row in partial_rows if row.module_key in {"dart_disclosure", "macro"}]
+        self.assertFalse(financial_row.meta.missing_data_flag)
+        for row in runtime_rows:
+            self.assertTrue(row.meta.missing_data_flag)
 
     def test_missing_key_is_source_specific_and_not_stale(self):
         now = datetime(2026, 7, 8, tzinfo=timezone.utc)
@@ -471,6 +475,60 @@ class DataTrustSourcePanelTests(unittest.TestCase):
         self.assertEqual("missing_key", macro_row.status)
         self.assertEqual(("BOK_ECOS_API_KEY",), macro_row.missing_keys)
         self.assertFalse(macro_row.meta.stale_data_flag)
+
+    def test_keyless_dart_public_fallback_is_reported_as_active_fallback(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_data_trust_source_panel(
+            snapshots=current_snapshots(now),
+            portfolio_holding_count=1,
+            using_mock_portfolio=False,
+            api_key_status={"OPENDART_API_KEY": False, "BOK_ECOS_API_KEY": True},
+            runtime_source_status={
+                "dart_disclosure": {
+                    "status": "fallback",
+                    "usable_data": True,
+                    "source": "DART 최근공시 공개 페이지",
+                    "as_of_date": "2026-07-08T10:00:00+09:00",
+                    "fetched_at": "2026-07-08T10:05:00+09:00",
+                }
+            },
+            now=now,
+        )
+
+        row = next(item for item in state.source_coverage if item.module_key == "dart_disclosure")
+        self.assertEqual(row.status, "fallback")
+        self.assertTrue(row.meta.is_fallback)
+        self.assertFalse(row.meta.missing_data_flag)
+        self.assertEqual(row.active_source_id, "dart_public_disclosures")
+        self.assertEqual(row.required_keys, ())
+        self.assertEqual(row.missing_keys, ())
+
+    def test_connected_ecos_runtime_preserves_observation_freshness(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_data_trust_source_panel(
+            snapshots=current_snapshots(now),
+            portfolio_holding_count=1,
+            using_mock_portfolio=False,
+            api_key_status=all_keys_present(),
+            runtime_source_status={
+                "macro": {
+                    "status": "ready",
+                    "usable_data": True,
+                    "as_of_date": "2025-01-01",
+                    "available_at": "2026-07-08T12:00:00+00:00",
+                    "fetched_at": "2026-07-08T12:00:00+00:00",
+                    "stale_data_flag": True,
+                }
+            },
+            now=now,
+        )
+
+        macro_row = next(row for row in state.source_coverage if row.module_key == "macro")
+        self.assertEqual(macro_row.status, "connected")
+        self.assertEqual(macro_row.coverage_status, "stale")
+        self.assertTrue(macro_row.meta.stale_data_flag)
+        self.assertEqual(macro_row.meta.as_of_date, "2025-01-01")
+        self.assertEqual(macro_row.meta.available_at, "2026-07-08T12:00:00+00:00")
 
 
 if __name__ == "__main__":
