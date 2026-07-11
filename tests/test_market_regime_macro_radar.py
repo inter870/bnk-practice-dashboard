@@ -10,6 +10,10 @@ from src.institutional import (
     market_regime_macro_radar_html,
     normalize_regime_label_ko,
 )
+from src.institutional.market_regime import (
+    SECTOR_HEADWIND_MAX_SCORE,
+    SECTOR_TAILWIND_MIN_SCORE,
+)
 from src.institutional.ui import _macro_change, _macro_value
 from src.ui.korean_labels import module_title, status_label
 
@@ -86,6 +90,38 @@ class MarketRegimeMacroRadarTests(unittest.TestCase):
         self.assertIn("FX_PRESSURE", state.regime_labels)
         self.assertIn("STAGFLATION_RISK", state.regime_labels)
         self.assertLess(state.regime_score, 40)
+
+    def test_sector_thresholds_direction_and_order_are_preserved(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_market_regime_macro_radar(macro_inputs=favorable_macro(), allow_mock=False, now=now)
+        scores = [row.tailwind_score for row in state.sector_tailwinds]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+        for row in state.sector_tailwinds:
+            expected = (
+                "tailwind"
+                if row.tailwind_score >= SECTOR_TAILWIND_MIN_SCORE
+                else "headwind"
+                if row.tailwind_score <= SECTOR_HEADWIND_MAX_SCORE
+                else "neutral"
+            )
+            self.assertEqual(expected, row.label)
+
+    def test_sector_environment_cards_use_professional_korean_terms(self):
+        now = datetime(2026, 7, 8, tzinfo=timezone.utc)
+        state = build_market_regime_macro_radar(macro_inputs=unfavorable_macro(), allow_mock=False, now=now)
+        rendered = market_regime_macro_radar_html(state)
+        for expected in (
+            "강세 섹터 TOP 3",
+            "약세 섹터 TOP 3",
+            "중립 섹터 TOP 3",
+            "상승 촉매",
+            "하방 리스크",
+            "경기방어주",
+            "자동차·수출주",
+        ):
+            self.assertIn(expected, rendered)
+        for forbidden in ("순풍 TOP 3", "역풍 TOP 3", "순풍:", "역풍:"):
+            self.assertNotIn(forbidden, rendered)
 
     def test_missing_macro_data_empty_and_mock_fallback(self):
         now = datetime(2026, 7, 8, tzinfo=timezone.utc)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Iterable
 
 
 MODULE_TITLES = {
@@ -462,6 +462,48 @@ SECTOR_LABELS = {
     "Industrials": "산업재",
     "Materials / Industrials": "소재·산업재",
     "Semiconductor": "반도체",
+    "Defensives": "경기방어주",
+    "Autos / Exporters": "자동차·수출주",
+    "Autos·Exporters": "자동차·수출주",
+}
+
+SECTOR_ENVIRONMENT_LABELS = {
+    "tailwind": {
+        "title": "강세 섹터 TOP 3",
+        "subtitle": "상승 모멘텀 우위",
+        "positive_label": "상승 촉매",
+        "negative_label": "하방 리스크",
+        "empty_message": "현재 강세 기준을 충족한 섹터가 없습니다.",
+    },
+    "headwind": {
+        "title": "약세 섹터 TOP 3",
+        "subtitle": "하방 리스크 우위",
+        "positive_label": "상승 촉매",
+        "negative_label": "하방 리스크",
+        "empty_message": "현재 약세 기준에 해당하는 섹터가 없습니다.",
+    },
+    "neutral": {
+        "title": "중립 섹터 TOP 3",
+        "subtitle": "추세 확인 필요",
+        "positive_label": "상승 촉매",
+        "negative_label": "하방 리스크",
+        "empty_message": "현재 중립 구간에 해당하는 섹터가 없습니다.",
+    },
+}
+
+SECTOR_FACTOR_LABELS = {
+    "semi exports": "반도체 수출",
+    "export cycle": "업황 사이클",
+    "exports": "수출 모멘텀",
+    "weak KRW": "원화 약세 수혜",
+    "risk appetite": "위험선호 국면",
+    "rates": "금리 부담",
+    "rate level": "금리 수준",
+    "risk-off": "위험회피 국면",
+    "risk buffer": "경기 방어력",
+    "export demand": "수출 수요",
+    "FX pressure": "환율 부담",
+    "환율 pressure": "환율 부담",
 }
 
 ALPHA_DRIVER_LABELS = {
@@ -559,6 +601,56 @@ def stock_name_label(value: Any) -> str:
 def sector_label(value: Any) -> str:
     text = "" if value is None else str(value).strip()
     return SECTOR_LABELS.get(text, text.replace(" / ", "·"))
+
+
+def sector_environment_labels(value: Any) -> dict[str, str]:
+    """Return display-only labels without changing the internal regime key."""
+    key = "" if value is None else str(value).strip().lower()
+    return dict(SECTOR_ENVIRONMENT_LABELS.get(key, SECTOR_ENVIRONMENT_LABELS["neutral"]))
+
+
+def sector_driver_text(values: Iterable[Any] | None, *, role: str) -> str:
+    """Normalize sector drivers while preserving the source model semantics."""
+    items = [str(item).strip() for item in (values or ()) if str(item).strip()]
+    if not items:
+        return "제한적" if role == "negative" else "확인되지 않음"
+
+    rendered: list[str] = []
+    consumed: set[str] = set()
+    item_set = set(items)
+    if {"semi exports", "export cycle"}.issubset(item_set):
+        rendered.append("반도체 수출·업황 사이클")
+        consumed.update({"semi exports", "export cycle"})
+    if {"exports", "weak KRW"}.issubset(item_set):
+        rendered.append("수출 모멘텀·원화 약세 수혜")
+        consumed.update({"exports", "weak KRW"})
+
+    for item in items:
+        if item in consumed:
+            continue
+        translated = SECTOR_FACTOR_LABELS.get(item, alpha_driver_label(item))
+        if translated == item and re.search(r"[A-Za-z]", item):
+            translated = "확인 필요"
+        if translated not in rendered:
+            rendered.append(translated)
+    return " · ".join(rendered) if rendered else ("제한적" if role == "negative" else "확인되지 않음")
+
+
+def sector_empty_state(
+    value: Any,
+    *,
+    tailwind_min_score: int,
+    headwind_max_score: int,
+) -> tuple[str, str]:
+    labels = sector_environment_labels(value)
+    key = "" if value is None else str(value).strip().lower()
+    if key == "tailwind":
+        criterion = f"기준: 섹터 환경 점수 {tailwind_min_score}점 이상"
+    elif key == "headwind":
+        criterion = f"기준: 섹터 환경 점수 {headwind_max_score}점 이하"
+    else:
+        criterion = f"기준: 섹터 환경 점수 {headwind_max_score + 1}~{tailwind_min_score - 1}점"
+    return labels["empty_message"], criterion
 
 
 def clean_dart_category_label(value: Any) -> str:

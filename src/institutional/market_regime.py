@@ -27,6 +27,8 @@ REGIME_LABELS = (
 )
 
 KST = ZoneInfo("Asia/Seoul")
+SECTOR_TAILWIND_MIN_SCORE = 60
+SECTOR_HEADWIND_MAX_SCORE = 44
 
 REGIME_LABEL_KO = {
     "RISK_ON": "위험선호",
@@ -326,7 +328,13 @@ def _sector_tailwinds(indicators: tuple[MacroIndicatorRow, ...], meta: DataSourc
     rows: list[SectorTailwindRow] = []
     for sector, raw_score, positives, negatives in sector_defs:
         score = int(round(_clamp(raw_score, 0.0, 100.0)))
-        label = "tailwind" if score >= 60 else "headwind" if score <= 44 else "neutral"
+        label = (
+            "tailwind"
+            if score >= SECTOR_TAILWIND_MIN_SCORE
+            else "headwind"
+            if score <= SECTOR_HEADWIND_MAX_SCORE
+            else "neutral"
+        )
         rows.append(
             SectorTailwindRow(
                 sector=sector,

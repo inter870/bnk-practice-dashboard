@@ -1612,6 +1612,284 @@ body,
     }
 }
 
+/* Portfolio command-center KPIs: scoped to the three dynamic portfolio values. */
+.portfolio-kpi-region {
+    width: 100%;
+    min-width: 0;
+    margin: 0 0 8px;
+}
+
+.portfolio-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    align-items: stretch;
+    width: 100%;
+    min-width: 0;
+}
+
+.portfolio-kpi-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    height: auto;
+    padding: 16px 18px;
+    box-sizing: border-box;
+    border: 1px solid var(--kos-border-subtle);
+    border-radius: 12px;
+    background: rgba(16, 24, 39, 0.78);
+    color: var(--kos-text-primary);
+}
+
+.portfolio-kpi-label {
+    color: var(--kos-text-tertiary);
+    font-size: max(12px, 0.78rem);
+    font-weight: 720;
+    line-height: 1.35;
+    letter-spacing: 0;
+    word-break: keep-all;
+}
+
+.portfolio-kpi-value {
+    max-width: 100%;
+    min-width: 0;
+    color: var(--kos-text-hero);
+    font-family: var(--kos-font-num);
+    font-size: clamp(1.55rem, 3.2vw, 2.35rem);
+    font-weight: 840;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.08;
+    letter-spacing: 0;
+    white-space: normal;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+}
+
+.portfolio-kpi-context {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    margin-top: 10px;
+    padding: 9px 12px;
+    border: 1px solid var(--kos-border-subtle);
+    border-radius: 10px;
+    background: rgba(139, 92, 246, 0.08);
+    color: var(--kos-text-secondary);
+    line-height: 1.4;
+}
+
+.portfolio-kpi-context span {
+    flex: 0 0 auto;
+    color: var(--kos-text-muted);
+    font-size: max(12px, 0.76rem);
+    font-weight: 700;
+}
+
+.portfolio-kpi-context strong {
+    min-width: 0;
+    color: var(--kos-text-primary);
+    font-size: max(13px, 0.84rem);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+/* Market-regime sector cards: compact rows without changing model keys or scores. */
+.sector-environment-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    margin-top: 14px;
+}
+
+.sector-environment-grid .sector-environment-card {
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    overflow: visible;
+}
+
+.sector-environment-grid .sector-environment-header {
+    align-items: flex-start;
+    gap: 8px;
+    padding: 12px 14px;
+}
+
+.sector-environment-grid .sector-environment-header strong,
+.sector-environment-grid .sector-environment-header span {
+    min-width: 0;
+    line-height: 1.35;
+    letter-spacing: 0;
+    word-break: keep-all;
+}
+
+.sector-environment-grid .sector-environment-body {
+    padding: 11px;
+}
+
+.sector-environment-list {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+}
+
+.sector-environment-item {
+    min-width: 0;
+    height: auto;
+    padding: 10px 11px;
+    box-sizing: border-box;
+    border: 1px solid var(--kos-border-subtle);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.58);
+    color: var(--kos-text-secondary);
+}
+
+.sector-environment-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
+    align-items: start;
+    gap: 10px;
+    min-width: 0;
+}
+
+.sector-environment-heading > strong {
+    min-width: 0;
+    color: var(--kos-text-primary);
+    font-size: max(13px, 0.88rem);
+    font-weight: 820;
+    line-height: 1.35;
+    letter-spacing: 0;
+    word-break: keep-all;
+    overflow-wrap: normal;
+}
+
+.sector-environment-score {
+    color: var(--kos-text-secondary);
+    font-family: var(--kos-font-num);
+    font-size: max(12px, 0.78rem);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.35;
+    white-space: nowrap;
+}
+
+.sector-environment-track {
+    width: 100%;
+    height: 6px;
+    margin: 8px 0;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.20);
+}
+
+.sector-environment-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--kos-market-flat);
+}
+
+.sector-environment-item.tailwind .sector-environment-fill {
+    background: var(--kos-market-up);
+}
+
+.sector-environment-item.headwind .sector-environment-fill {
+    background: var(--kos-market-down);
+}
+
+.sector-environment-factor {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 7px;
+    min-width: 0;
+    margin-top: 4px;
+    font-size: max(12px, 0.76rem);
+    line-height: 1.45;
+}
+
+.sector-environment-factor > span {
+    color: var(--kos-text-muted);
+    font-weight: 720;
+    word-break: keep-all;
+}
+
+.sector-environment-factor > strong {
+    min-width: 0;
+    color: var(--kos-text-secondary);
+    font-weight: 680;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}
+
+.sector-environment-empty {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    height: auto;
+    padding: 11px 12px;
+    border: 1px dashed var(--kos-border-default);
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.44);
+}
+
+.sector-environment-empty strong {
+    color: var(--kos-text-secondary);
+    font-size: max(12px, 0.8rem);
+    line-height: 1.45;
+    word-break: keep-all;
+}
+
+.sector-environment-empty span {
+    color: var(--kos-text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+    .portfolio-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .sector-environment-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 640px) {
+    .portfolio-kpi-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+    .portfolio-kpi-card {
+        padding: 14px 16px;
+    }
+    .portfolio-kpi-value {
+        font-size: clamp(1.65rem, 7vw, 2.15rem);
+    }
+    .portfolio-kpi-context {
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+    .sector-environment-grid .sector-environment-header {
+        padding: 11px 12px;
+    }
+    .sector-environment-grid .sector-environment-body {
+        padding: 10px;
+    }
+    .sector-environment-item {
+        padding: 10px;
+    }
+}
+
+@media (max-width: 420px) {
+    .sector-environment-grid .sector-environment-header {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 2px;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     .korea-os-theme *,
     .korea-os-shell *,

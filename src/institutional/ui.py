@@ -41,7 +41,11 @@ from .data_trust_display import (
     formatKoDateTime,
     isPlannedAdapter,
 )
-from .market_regime import normalize_regime_label_ko
+from .market_regime import (
+    SECTOR_HEADWIND_MAX_SCORE,
+    SECTOR_TAILWIND_MIN_SCORE,
+    normalize_regime_label_ko,
+)
 from src.ui.korean_labels import (
     action_label,
     alpha_driver_label,
@@ -51,6 +55,9 @@ from src.ui.korean_labels import (
     module_title,
     rating_label,
     risk_flag_label,
+    sector_driver_text,
+    sector_empty_state,
+    sector_environment_labels,
     severity_label,
     sector_label,
     signal_label,
@@ -926,24 +933,58 @@ def _recent_change_rows(rows: tuple[RecentMacroChange, ...]) -> str:
 def _sector_driver_rows(rows: tuple[SectorTailwindRow, ...], label: str, *, limit: int = 3) -> str:
     selected = [row for row in rows if row.label == label][:limit]
     if not selected:
-        return '<div class="pi-rebalance-reason">표시할 섹터가 없습니다.</div>'
+        message, criterion = sector_empty_state(
+            label,
+            tailwind_min_score=SECTOR_TAILWIND_MIN_SCORE,
+            headwind_max_score=SECTOR_HEADWIND_MAX_SCORE,
+        )
+        return f"""
+        <div class="sector-environment-empty" role="status">
+            <strong>{html.escape(message)}</strong>
+            <span>{html.escape(criterion)}</span>
+        </div>
+        """
+    labels = sector_environment_labels(label)
     rendered: list[str] = []
     for row in selected:
-        positives = ", ".join(alpha_driver_label(item) for item in row.positive_drivers[:2]) if row.positive_drivers else "근거 부족"
-        negatives = ", ".join(alpha_driver_label(item) for item in row.negative_drivers[:2]) if row.negative_drivers else "부담 요인 제한"
+        positives = sector_driver_text(row.positive_drivers[:2], role="positive")
+        negatives = sector_driver_text(row.negative_drivers[:2], role="negative")
+        score = max(0, min(100, int(row.tailwind_score)))
         rendered.append(
             f"""
-            <div class="pi-rebalance-item">
-                <div class="pi-rebalance-top">
-                    <div class="pi-rebalance-asset">{html.escape(sector_label(row.sector))}</div>
-                    <span class="pi-badge {_macro_signal_tone(row.label)}">{html.escape(str(row.tailwind_score))}/100</span>
+            <div class="sector-environment-item {html.escape(row.label)}" role="listitem">
+                <div class="sector-environment-heading">
+                    <strong>{html.escape(sector_label(row.sector))}</strong>
+                    <span class="sector-environment-score">{score}/100</span>
                 </div>
-                <div class="pi-rebalance-reason">순풍: {html.escape(positives)}</div>
-                <div class="pi-rebalance-impact">역풍: {html.escape(negatives)}</div>
+                <div class="sector-environment-track" role="img" aria-label="섹터 환경 점수 {score}점">
+                    <span class="sector-environment-fill" style="width:{score}%;"></span>
+                </div>
+                <div class="sector-environment-factor positive">
+                    <span>{html.escape(labels['positive_label'])}</span>
+                    <strong>{html.escape(positives)}</strong>
+                </div>
+                <div class="sector-environment-factor negative">
+                    <span>{html.escape(labels['negative_label'])}</span>
+                    <strong>{html.escape(negatives)}</strong>
+                </div>
             </div>
             """
         )
-    return "".join(rendered)
+    return f'<div class="sector-environment-list" role="list">{"".join(rendered)}</div>'
+
+
+def _sector_environment_card(rows: tuple[SectorTailwindRow, ...], label: str) -> str:
+    labels = sector_environment_labels(label)
+    return f"""
+    <section class="pi-card sector-environment-card {html.escape(label)}" aria-label="{html.escape(labels['title'])}">
+        <div class="pi-card-header sector-environment-header">
+            <strong>{html.escape(labels['title'])}</strong>
+            <span>{html.escape(labels['subtitle'])}</span>
+        </div>
+        <div class="pi-card-body sector-environment-body">{_sector_driver_rows(rows, label)}</div>
+    </section>
+    """
 
 
 def _macro_source_detail_rows(rows: tuple[MacroIndicatorRow, ...]) -> str:
@@ -999,19 +1040,10 @@ def market_regime_macro_radar_html(state: MarketRegimeMacroRadarState) -> str:
                 <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:10px;">{label_badges}{mock_badge}</div>
             </div>
         </div>
-        <div class="portfolio-intelligence-grid" style="margin-top:14px;">
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>순풍 TOP 3</strong><span>우호 섹터</span></div>
-                <div class="pi-card-body">{_sector_driver_rows(state.sector_tailwinds, "tailwind")}</div>
-            </div>
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>역풍 TOP 3</strong><span>부담 섹터</span></div>
-                <div class="pi-card-body">{_sector_driver_rows(state.sector_tailwinds, "headwind")}</div>
-            </div>
-            <div class="pi-card">
-                <div class="pi-card-header"><strong>중립 TOP 3</strong><span>방향성 확인</span></div>
-                <div class="pi-card-body">{_sector_driver_rows(state.sector_tailwinds, "neutral")}</div>
-            </div>
+        <div class="portfolio-intelligence-grid sector-environment-grid">
+            {_sector_environment_card(state.sector_tailwinds, "tailwind")}
+            {_sector_environment_card(state.sector_tailwinds, "headwind")}
+            {_sector_environment_card(state.sector_tailwinds, "neutral")}
         </div>
         <div class="pi-card" style="margin-top:14px;">
             <div class="pi-card-header"><strong>매크로 히트맵</strong><span>compact table</span></div>

@@ -155,6 +155,7 @@ from src.institutional import (
 )
 from src.ui.korea_os_theme import inject_korea_os_theme
 from src.ui.korean_market_colors import getChartSeriesColor, getKoreanMarketColorToken
+from src.ui.portfolio_display import portfolio_kpi_cards_html, resolve_portfolio_number
 
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -8250,8 +8251,11 @@ def render_portfolio_section(
     last_refresh: str,
 ) -> None:
     st.markdown('<div class="section-title">포트폴리오 관제센터</div>', unsafe_allow_html=True)
-    total_assets = safe_float(st.session_state.get("portfolio_total_assets")) or 100_000_000.0
-    cash = safe_float(st.session_state.get("portfolio_cash")) or 0.0
+    total_assets = resolve_portfolio_number(
+        st.session_state.get("portfolio_total_assets"),
+        default=100_000_000.0,
+    )
+    cash = resolve_portfolio_number(st.session_state.get("portfolio_cash"), default=0.0)
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     holdings, errors = parse_portfolio_text(holdings_text)
     regime = build_market_regime_output(snapshot)
@@ -8260,11 +8264,15 @@ def render_portfolio_section(
         st.warning(err)
 
     cash_pct = cash / total_assets * 100 if total_assets > 0 else 0.0
-    cols = st.columns(4)
-    cols[0].metric("총자산", f"{total_assets:,.0f}원")
-    cols[1].metric("현금", f"{cash:,.0f}원")
-    cols[2].metric("현금 비중", f"{cash_pct:.1f}%")
-    cols[3].metric("시장 국면", f"{regime_label_ko(regime.regime)} / {regime.score}")
+    st.html(
+        portfolio_kpi_cards_html(
+            total_assets=total_assets,
+            cash=cash,
+            cash_percent=cash_pct,
+            regime_label=regime_label_ko(regime.regime),
+            regime_score=regime.score,
+        )
+    )
     st.caption(f"데이터 기준: {last_refresh}")
 
     if not holdings:
