@@ -11,6 +11,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any, Iterable
+from types import MappingProxyType
 from urllib.parse import urljoin
 from zoneinfo import ZoneInfo
 
@@ -47,7 +48,7 @@ from src.config.env import (
     sanitize_secret_text,
 )
 from src.discovery import build_universe, scan_universe
-from src.execution import build_execution_plan, should_block_for_execution
+from src.execution import build_execution_plan, legacy_cost_policy, should_block_for_execution
 from src.exits import build_exit_plan
 from src.monitoring.signal_ledger import (
     compute_forward_outcomes,
@@ -86,6 +87,7 @@ from src.portfolio import (
     getPortfolioSummary,
     getWatchlist,
     reconstruct_portfolio_value_history,
+    reconcile_portfolio_context,
 )
 from src.korea_equity.formatting import (
     candleSummaryText as korea_candle_summary_text,
@@ -255,6 +257,7 @@ OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 OPENAI_BRIEFING_MODEL = "gpt-5.5"
 DATA_REFRESH_COOLDOWN_SECONDS = config_positive_int("DATA_REFRESH_COOLDOWN_SECONDS", 15)
 GPT_GENERATION_COOLDOWN_SECONDS = config_positive_int("GPT_GENERATION_COOLDOWN_SECONDS", 60)
+SHARED_WRITES_ENABLED = config_bool("STANCE_ENABLE_SHARED_WRITES", False)
 KIS_APP_KEY = config_value("KIS_APP_KEY", "")
 KIS_APP_SECRET = config_value("KIS_APP_SECRET", "")
 KIS_BASE_URL = config_value("KIS_BASE_URL", "https://openapi.koreainvestment.com:9443").rstrip("/")
@@ -2501,7 +2504,7 @@ YIELD_SYMBOLS = {
 }
 
 
-RISK_DEFAULTS = {
+RISK_DEFAULTS = MappingProxyType({
     "risk_per_trade_pct": 0.0025,
     "max_position_pct": 0.10,
     "max_sector_pct": 0.30,
@@ -2510,7 +2513,7 @@ RISK_DEFAULTS = {
     "extreme_risk_off_min_rr": 3.0,
     "trading_cost_pct": 0.35,
     "slippage_pct": 0.15,
-}
+})
 
 
 @dataclass
@@ -2633,6 +2636,23 @@ SOURCE_LABELS = {
     "BOK ECOS": "한국은행 ECOS",
     "FRED": "FRED",
 }
+
+
+def current_risk_settings() -> dict[str, float]:
+    defaults = dict(RISK_DEFAULTS)
+    try:
+        stored = st.session_state.get("risk_settings", {})
+    except Exception:
+        stored = {}
+    if isinstance(stored, dict):
+        for key in defaults:
+            try:
+                value = float(stored.get(key, defaults[key]))
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(value) and value >= 0:
+                defaults[key] = value
+    return defaults
 
 CURRENT_MARKET_FREQUENCIES = {"near_realtime", "realtime_official", "intraday"}
 CURRENT_MARKET_SOURCES = {"KIS Open API", "Naver Finance", "Naver"}
@@ -3896,11 +3916,16 @@ def validate_briefing_output(text: str, schema_text: str) -> tuple[bool, list[st
     return len(errors) == 0, errors, cleaned
 
 
-def save_briefing_text(text: str, ref_date: str) -> Path:
+def save_briefing_text(text: str, ref_date: str) -> Path | None:
+    if not SHARED_WRITES_ENABLED:
+        return None
     BRIEFING_DIR.mkdir(parents=True, exist_ok=True)
     safe_date = ref_date.replace("-", "")
-    path = BRIEFING_DIR / f"briefing_{safe_date}.txt"
-    path.write_text(text, encoding="utf-8")
+    suffix = now_kst().strftime("%H%M%S_%f")
+    path = BRIEFING_DIR / f"briefing_{safe_date}_{suffix}.txt"
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
     return path
 
 
@@ -4150,8 +4175,11 @@ def render_gpt_briefing_section(
                     st.session_state.briefing_error = ""
                     st.session_state.briefing_text = cleaned_text
                     st.session_state.briefing_context_signature = context_signature
-                    st.session_state.briefing_last_saved_path = str(saved_path)
-                    st.caption(f"저장 완료: {saved_path}")
+                    st.session_state.briefing_last_saved_path = saved_path.name if saved_path else ""
+                    if saved_path:
+                        st.caption(f"서버 저장 완료: {saved_path.name}")
+                    else:
+                        st.caption("현재 세션에만 보관됩니다. 서버 파일 저장은 비활성화되어 있습니다.")
             except Exception as exc:
                 st.session_state.briefing_status = "failed"
                 st.session_state.briefing_error = str(exc)
@@ -4162,7 +4190,7 @@ def render_gpt_briefing_section(
             st.warning("저장된 브리핑은 이전 조회 기준입니다. 최신 데이터로 다시 생성하는 것이 좋습니다.")
         st.info(st.session_state.briefing_text)
         if st.session_state.briefing_last_saved_path:
-            st.caption(f"저장 파일: {st.session_state.briefing_last_saved_path}")
+            st.caption(f"저장 파일: {Path(st.session_state.briefing_last_saved_path).name}")
         if st.session_state.briefing_error:
             st.warning(f"최근 브리핑 상태: {st.session_state.briefing_error}")
     elif st.session_state.briefing_error:
@@ -5183,7 +5211,8 @@ def expected_edge_from_plan(
         or calibration_sample_size < 30
     ):
         return None, None, 0.0
-    cost = RISK_DEFAULTS["trading_cost_pct"] + RISK_DEFAULTS["slippage_pct"]
+    risk_settings = current_risk_settings()
+    cost = risk_settings["trading_cost_pct"] + risk_settings["slippage_pct"]
     expected_edge = p_win * upside_pct - (1.0 - p_win) * risk_pct - cost
     regime_factor = 0.55 if regime.regime == "Extreme Risk-Off" else 0.75 if regime.regime == "Risk-Off" else 1.0 if regime.regime == "Neutral" else 1.08
     severity = str(disclosure_risk.get("severity", "Low"))
@@ -5248,15 +5277,16 @@ def build_action_decision(
         blockers.append(f"공시 위험 {severity_label_ko(severity)}")
     if execution_cost_pct is not None and expected_edge is not None and expected_edge <= 0:
         blockers.append("실행 비용 반영 후 기대값 부족")
-    if raw_rr is None or raw_rr < RISK_DEFAULTS["min_raw_rr"]:
+    risk_settings = current_risk_settings()
+    if raw_rr is None or raw_rr < risk_settings["min_raw_rr"]:
         blockers.append("기본 손익비 부족")
-    if quality_adjusted_rr is None or quality_adjusted_rr < RISK_DEFAULTS["min_quality_adjusted_rr"]:
+    if quality_adjusted_rr is None or quality_adjusted_rr < risk_settings["min_quality_adjusted_rr"]:
         blockers.append("품질조정 손익비 부족")
     if expected_edge is None or expected_edge <= 0:
         blockers.append("기대값 검증 필요")
     if expected_edge is None:
         blockers.append("검증된 승률 데이터 부족")
-    if regime.regime == "Extreme Risk-Off" and (raw_rr is None or raw_rr < RISK_DEFAULTS["extreme_risk_off_min_rr"]):
+    if regime.regime == "Extreme Risk-Off" and (raw_rr is None or raw_rr < risk_settings["extreme_risk_off_min_rr"]):
         blockers.append("극단 리스크오프 기준 미달")
     if kill_switch_active:
         blockers.append("신호 성과 kill-switch")
@@ -5291,14 +5321,15 @@ def build_action_decision(
     else:
         label = action_label(score)
 
-    base_max = min(regime.max_new_exposure, RISK_DEFAULTS["max_position_pct"])
+    risk_settings = current_risk_settings()
+    base_max = min(regime.max_new_exposure, risk_settings["max_position_pct"])
     if raw_rr is not None and raw_rr >= 3:
         base_max *= 1.15
     if severity in {"Medium", "High"}:
         base_max *= 0.55
     if severity == "Critical" or kill_switch_active or expected_edge is None:
         base_max = 0.0
-    max_position_pct = clamp(base_max, 0.0, RISK_DEFAULTS["max_position_pct"])
+    max_position_pct = clamp(base_max, 0.0, risk_settings["max_position_pct"])
 
     reasons = [
         f"시장 국면 {regime_label_ko(regime.regime)}({regime.score}점)",
@@ -6319,8 +6350,8 @@ def render_portfolio_risk_cockpit_section(
         cash = None if using_mock else safe_float(st.session_state.get("portfolio_cash"))
         price_series = getPortfolioSnapshots(allow_mock=allow_mock)
     thresholds = PortfolioRiskThresholds(
-        single_stock_weight=float(RISK_DEFAULTS.get("max_position_pct", 0.10) or 0.10),
-        sector_weight=float(RISK_DEFAULTS.get("max_sector_pct", 0.30) or 0.30),
+        single_stock_weight=float(current_risk_settings().get("max_position_pct", 0.10) or 0.10),
+        sector_weight=float(current_risk_settings().get("max_sector_pct", 0.30) or 0.30),
         cash_min_weight=0.03,
     )
     state = build_portfolio_risk_cockpit(
@@ -6344,8 +6375,7 @@ def render_data_trust_source_panel_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_DATA_TRUST", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_DATA_TRUST", True):
         return
 
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
@@ -6413,8 +6443,7 @@ def render_market_regime_macro_radar_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_MARKET_REGIME_RADAR", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_MARKET_REGIME_RADAR", True):
         return
     state = build_market_regime_macro_radar(snapshots=snapshot, allow_mock=mock_data_enabled())
     st.html(market_regime_macro_radar_html(state))
@@ -6425,8 +6454,7 @@ def render_krw_rates_fx_dashboard_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_KRW_RATES_FX", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_KRW_RATES_FX", True):
         return
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
     parsed_rows, _ = parse_portfolio_text(holdings_text)
@@ -6441,8 +6469,7 @@ def render_valuation_relative_cheapness_panel_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_VALUATION_PANEL", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_VALUATION_PANEL", True):
         return
     state = build_valuation_relative_cheapness_panel(allow_mock=mock_data_enabled())
     st.html(valuation_relative_cheapness_panel_html(state))
@@ -6453,8 +6480,7 @@ def render_fundamental_quality_panel_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_FUNDAMENTAL_QUALITY", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_FUNDAMENTAL_QUALITY", True):
         return
     state = build_fundamental_quality_panel(allow_mock=mock_data_enabled())
     st.html(fundamental_quality_panel_html(state))
@@ -6546,8 +6572,7 @@ def render_dart_disclosure_catalyst_panel_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_DART_CATALYSTS", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_DART_CATALYSTS", True):
         return
     state = build_runtime_dart_catalyst_state(refresh_token)
     st.html(dart_disclosure_catalyst_panel_html(state))
@@ -6558,8 +6583,7 @@ def render_smart_money_flow_short_pressure_panel_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_FLOW_SHORT_PRESSURE", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_FLOW_SHORT_PRESSURE", True):
         return
     state = build_smart_money_flow_short_pressure_panel(allow_mock=mock_data_enabled())
     st.html(smart_money_flow_short_pressure_panel_html(state))
@@ -6570,8 +6594,7 @@ def render_forward_alpha_ranking_panel_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_FORWARD_ALPHA_RANKING", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_FORWARD_ALPHA_RANKING", True):
         return
     state = build_runtime_forward_alpha_state(snapshot, refresh_token)
     st.html(forward_alpha_ranking_panel_html(state))
@@ -6582,8 +6605,7 @@ def render_portfolio_optimizer_alert_center_section(
     code_to_name: dict[str, str],
     refresh_token: int,
 ) -> None:
-    flag_value = os.getenv("STANCE_ENABLE_PORTFOLIO_OPTIMIZER", "1").strip().lower()
-    if flag_value in {"0", "false", "no", "off"}:
+    if not config_bool("STANCE_ENABLE_PORTFOLIO_OPTIMIZER", True):
         return
     allow_mock = mock_data_enabled()
     holdings_text = str(st.session_state.get("portfolio_holdings_text", ""))
@@ -6592,7 +6614,12 @@ def render_portfolio_optimizer_alert_center_section(
     optimizer_holdings: list[dict[str, Any]] = []
     total_value = None
     cash_ratio = None
+    action_eligible = not parse_errors
+    blocking_reasons: tuple[str, ...] = tuple("portfolio_parse_error" for _ in parse_errors[:1])
     if context is not None and context.computed_total > 0:
+        reconciliation = reconcile_portfolio_context(context)
+        action_eligible = action_eligible and reconciliation.action_eligible
+        blocking_reasons = tuple(dict.fromkeys((*blocking_reasons, *reconciliation.blocking_reason_codes)))
         row_by_code = {str(row.get("code")): row for row in parsed_rows}
         total_value = context.computed_total
         cash_ratio = context.cash / total_value
@@ -6618,6 +6645,8 @@ def render_portfolio_optimizer_alert_center_section(
         total_portfolio_value=total_value,
         cash_ratio=cash_ratio,
         allow_mock=allow_mock,
+        action_eligible=action_eligible,
+        blocking_reason_codes=blocking_reasons,
     )
     st.html(portfolio_optimizer_alert_center_html(state))
 
@@ -8315,7 +8344,7 @@ def render_portfolio_section(
         priority = 0
         if "위험" in exit_plan.status or exit_plan.exit_confidence < 45:
             priority += 2
-        if loss_pct_assets is not None and loss_pct_assets > RISK_DEFAULTS["risk_per_trade_pct"] * 100:
+        if loss_pct_assets is not None and loss_pct_assets > current_risk_settings()["risk_per_trade_pct"] * 100:
             priority += 2
         if exit_plan.warnings:
             priority += 1
@@ -8338,8 +8367,8 @@ def render_portfolio_section(
     max_sector = max((value / total_assets * 100 for value in sector_exposure.values()), default=0.0) if total_assets > 0 else 0.0
     if cash_pct < regime.recommended_cash_range[0]:
         st.warning(f"현재 현금 비중 {cash_pct:.1f}%는 권장 하단 {regime.recommended_cash_range[0]}%보다 낮습니다.")
-    if max_sector > RISK_DEFAULTS["max_sector_pct"] * 100:
-        st.warning(f"섹터 집중도 {max_sector:.1f}%가 기본 한도 {RISK_DEFAULTS['max_sector_pct'] * 100:.0f}%를 넘었습니다.")
+    if max_sector > current_risk_settings()["max_sector_pct"] * 100:
+        st.warning(f"섹터 집중도 {max_sector:.1f}%가 기본 한도 {current_risk_settings()['max_sector_pct'] * 100:.0f}%를 넘었습니다.")
 
     st.html(
         f"""
@@ -8405,7 +8434,7 @@ def render_settings_section() -> None:
     }
     settings_rows = "".join(
         f"<tr><td>{html.escape(setting_labels.get(str(key), str(key)))}</td><td>{html.escape(str(value))}</td></tr>"
-        for key, value in RISK_DEFAULTS.items()
+        for key, value in current_risk_settings().items()
     )
     st.html(
         f"""
@@ -8644,6 +8673,12 @@ def render_signal_outcome_section(
     refresh_token: int,
 ) -> None:
     st.markdown('<div class="section-title">신호 성과 기록</div>', unsafe_allow_html=True)
+    if not SHARED_WRITES_ENABLED:
+        st.info(
+            "공유 저장소 쓰기가 비활성화되어 신호 원장 조회·갱신을 중단했습니다. "
+            "신뢰할 수 있는 단일 사용자 또는 영속 저장 환경에서 STANCE_ENABLE_SHARED_WRITES=true로 활성화하세요."
+        )
+        return
     init_db(SIGNAL_LEDGER_DB)
     kill_state = get_kill_switch_state(SIGNAL_LEDGER_DB)
     metric_cols = st.columns(4)
@@ -8657,6 +8692,11 @@ def render_signal_outcome_section(
     kospi_snap = snapshot.get("KOSPI")
     kospi_close = kospi_snap.raw["Close"] if kospi_snap and kospi_snap.raw is not None and "Close" in kospi_snap.raw.columns else None
     leadership_rows = build_watchlist_insights(valid_rows, refresh_token, kospi_close, market_score, regime_output)
+    risk_settings = current_risk_settings()
+    cost_policy = legacy_cost_policy(
+        risk_settings.get("trading_cost_pct", 0.0),
+        risk_settings.get("slippage_pct", 0.0),
+    )
 
     if st.button("현재 관심종목 신호 저장", use_container_width=True):
         saved = 0
@@ -8680,6 +8720,7 @@ def render_signal_outcome_section(
                 reasons_positive=action.reasons,
                 reasons_negative=action.blockers,
                 source_snapshot_id=datetime.now().strftime("%Y%m%d%H%M%S"),
+                cost_policy_id=cost_policy.policy_id,
             )
             store_signal(SIGNAL_LEDGER_DB, record)
             saved += 1
@@ -8688,7 +8729,7 @@ def render_signal_outcome_section(
     if st.button("저장 신호 사후성과 업데이트", use_container_width=True):
         updated = 0
         benchmark_history = load_symbol_history("KS11", refresh_token, periods=520)
-        cost_bps = (float(RISK_DEFAULTS.get("trading_cost_pct", 0.0)) + float(RISK_DEFAULTS.get("slippage_pct", 0.0))) * 100.0
+        cost_bps = cost_policy.total_round_trip_bps
         for record_row in list_recent_signals(SIGNAL_LEDGER_DB, limit=50):
             record = signal_record_from_mapping(record_row)
             hist = load_symbol_history(record.code, refresh_token, periods=520)
@@ -8833,7 +8874,7 @@ def render_decision_ribbon(
         total = sum(float(item.quantity) * float(item.current_price) for item in holdings) + cash
         concentration = calculateConcentrationRisk(holdings, total_portfolio_value=total)
         top_weight = safe_float(concentration.get("topHoldingWeight")) or 0.0
-        max_weight = float(RISK_DEFAULTS.get("max_position_pct", 0.10) or 0.10)
+        max_weight = float(current_risk_settings().get("max_position_pct", 0.10) or 0.10)
         risk_usage = top_weight / max_weight * 100 if max_weight > 0 else None
         risk_usage_text = "계산 불가" if risk_usage is None else f"{risk_usage:.0f}%"
         risk_detail = f"최대 종목 {top_weight * 100:.1f}% / 허용 {max_weight * 100:.1f}%"
@@ -9406,18 +9447,22 @@ def main() -> None:
         )
 
         with st.expander("리스크 기본값"):
-            risk_per_trade_default = max(5, min(200, int(round(RISK_DEFAULTS["risk_per_trade_pct"] * 10_000 / 5) * 5)))
-            max_position_default = max(100, min(3_000, int(round(RISK_DEFAULTS["max_position_pct"] * 10_000 / 50) * 50)))
-            trading_cost_default = max(0, min(200, int(round(RISK_DEFAULTS["trading_cost_pct"] * 100 / 5) * 5)))
-            slippage_default = max(0, min(200, int(round(RISK_DEFAULTS["slippage_pct"] * 100 / 5) * 5)))
+            session_risk_settings = current_risk_settings()
+            risk_per_trade_default = max(5, min(200, int(round(session_risk_settings["risk_per_trade_pct"] * 10_000 / 5) * 5)))
+            max_position_default = max(100, min(3_000, int(round(session_risk_settings["max_position_pct"] * 10_000 / 50) * 50)))
+            trading_cost_default = max(0, min(200, int(round(session_risk_settings["trading_cost_pct"] * 100 / 5) * 5)))
+            slippage_default = max(0, min(200, int(round(session_risk_settings["slippage_pct"] * 100 / 5) * 5)))
             risk_per_trade_bps = st.slider("1회 거래 최대 손실(bp)", 5, 200, risk_per_trade_default, 5)
             max_position_bps = st.slider("단일 종목 최대 비중(bp)", 100, 3_000, max_position_default, 50)
             trading_cost_bps = st.slider("거래 비용·세금(bp)", 0, 200, trading_cost_default, 5)
             slippage_bps = st.slider("슬리피지(bp)", 0, 200, slippage_default, 5)
-            RISK_DEFAULTS["risk_per_trade_pct"] = risk_per_trade_bps / 10_000
-            RISK_DEFAULTS["max_position_pct"] = max_position_bps / 10_000
-            RISK_DEFAULTS["trading_cost_pct"] = trading_cost_bps / 100
-            RISK_DEFAULTS["slippage_pct"] = slippage_bps / 100
+            st.session_state.risk_settings = {
+                **session_risk_settings,
+                "risk_per_trade_pct": risk_per_trade_bps / 10_000,
+                "max_position_pct": max_position_bps / 10_000,
+                "trading_cost_pct": trading_cost_bps / 100,
+                "slippage_pct": slippage_bps / 100,
+            }
             st.caption("100bp = 1%")
 
         refresh_clicked = st.button("데이터 새로고침", use_container_width=True)

@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from contextlib import closing
 from datetime import datetime
+from datetime import timezone
+import hashlib
 import json
 import math
 import sqlite3
@@ -37,6 +39,20 @@ class SignalRecord:
     reasons_positive: list[str] = field(default_factory=list)
     reasons_negative: list[str] = field(default_factory=list)
     source_snapshot_id: str | None = None
+    signal_key: str | None = None
+    decision_at: str | None = None
+    next_executable_at: str | None = None
+    model_version: str = "legacy"
+    feature_version: str = "legacy"
+    score_version: str = "legacy"
+    universe_version: str = "unknown"
+    data_status: str = "UNAVAILABLE"
+    expected_return_gross: float | None = None
+    expected_return_net: float | None = None
+    benchmark_expected_return: float | None = None
+    downside_estimate: float | None = None
+    cost_policy_id: str | None = None
+    portfolio_snapshot_id: str | None = None
 
 
 @dataclass
@@ -52,6 +68,15 @@ class SignalOutcome:
     max_adverse_excursion: float | None
     realized_r_multiple: float | None
     action_correct: bool | None
+    entry_at: str | None = None
+    exit_at: str | None = None
+    entry_price: float | None = None
+    realized_cost: float | None = None
+    estimated_slippage: float | None = None
+    outcome_status: str = "PENDING"
+    evaluation_version: str = "p0-v1"
+    price_source: str | None = None
+    benchmark_source: str | None = None
 
 
 def create_signal_record(
@@ -70,10 +95,33 @@ def create_signal_record(
     reasons_positive: list[str] | None = None,
     reasons_negative: list[str] | None = None,
     source_snapshot_id: str | None = None,
+    decision_at: str | None = None,
+    model_version: str = "legacy",
+    feature_version: str = "legacy",
+    score_version: str = "legacy",
+    universe_version: str = "unknown",
+    data_status: str = "UNAVAILABLE",
+    portfolio_snapshot_id: str | None = None,
+    cost_policy_id: str | None = None,
+    expected_return_gross: float | None = None,
+    expected_return_net: float | None = None,
 ) -> SignalRecord:
+    generated_at = decision_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    canonical_key = "|".join(
+        (
+            str(code),
+            generated_at,
+            str(action),
+            str(model_version),
+            str(score_version),
+            str(source_snapshot_id or ""),
+            str(portfolio_snapshot_id or ""),
+        )
+    )
+    signal_key = hashlib.sha256(canonical_key.encode("utf-8")).hexdigest()
     return SignalRecord(
         signal_id=str(uuid.uuid4()),
-        generated_at=datetime.now().isoformat(timespec="seconds"),
+        generated_at=generated_at,
         code=code,
         name=name,
         action=action,
@@ -88,6 +136,17 @@ def create_signal_record(
         reasons_positive=reasons_positive or [],
         reasons_negative=reasons_negative or [],
         source_snapshot_id=source_snapshot_id,
+        signal_key=signal_key,
+        decision_at=generated_at,
+        model_version=model_version,
+        feature_version=feature_version,
+        score_version=score_version,
+        universe_version=universe_version,
+        data_status=data_status,
+        cost_policy_id=cost_policy_id,
+        portfolio_snapshot_id=portfolio_snapshot_id,
+        expected_return_gross=expected_return_gross,
+        expected_return_net=expected_return_net,
     )
 
 
@@ -156,13 +215,41 @@ def signal_record_from_mapping(value: Mapping[str, Any] | SignalRecord) -> Signa
         source_snapshot_id=(
             None if value.get("source_snapshot_id") in (None, "") else str(value["source_snapshot_id"])
         ),
+        signal_key=None if value.get("signal_key") in (None, "") else str(value["signal_key"]),
+        decision_at=None if value.get("decision_at") in (None, "") else str(value["decision_at"]),
+        next_executable_at=None if value.get("next_executable_at") in (None, "") else str(value["next_executable_at"]),
+        model_version=str(value.get("model_version") or "legacy"),
+        feature_version=str(value.get("feature_version") or "legacy"),
+        score_version=str(value.get("score_version") or "legacy"),
+        universe_version=str(value.get("universe_version") or "unknown"),
+        data_status=str(value.get("data_status") or "UNAVAILABLE"),
+        expected_return_gross=_optional_float(value.get("expected_return_gross")),
+        expected_return_net=_optional_float(value.get("expected_return_net")),
+        benchmark_expected_return=_optional_float(value.get("benchmark_expected_return")),
+        downside_estimate=_optional_float(value.get("downside_estimate")),
+        cost_policy_id=None if value.get("cost_policy_id") in (None, "") else str(value["cost_policy_id"]),
+        portfolio_snapshot_id=None if value.get("portfolio_snapshot_id") in (None, "") else str(value["portfolio_snapshot_id"]),
     )
+
+
+SIGNAL_SCHEMA_VERSION = 2
+
+
+def _ensure_columns(conn: sqlite3.Connection, table: str, columns: Mapping[str, str]) -> None:
+    existing = {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    for name, declaration in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
 
 def init_db(db_path: str | Path) -> None:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS signals (
@@ -204,25 +291,67 @@ def init_db(db_path: str | Path) -> None:
             )
             """
         )
+        _ensure_columns(
+            conn,
+            "signals",
+            {
+                "signal_key": "TEXT",
+                "decision_at": "TEXT",
+                "next_executable_at": "TEXT",
+                "model_version": "TEXT",
+                "feature_version": "TEXT",
+                "score_version": "TEXT",
+                "universe_version": "TEXT",
+                "data_status": "TEXT",
+                "expected_return_gross": "REAL",
+                "expected_return_net": "REAL",
+                "benchmark_expected_return": "REAL",
+                "downside_estimate": "REAL",
+                "cost_policy_id": "TEXT",
+                "portfolio_snapshot_id": "TEXT",
+            },
+        )
+        _ensure_columns(
+            conn,
+            "outcomes",
+            {
+                "entry_at": "TEXT",
+                "exit_at": "TEXT",
+                "entry_price": "REAL",
+                "realized_cost": "REAL",
+                "estimated_slippage": "REAL",
+                "outcome_status": "TEXT",
+                "evaluation_version": "TEXT",
+                "price_source": "TEXT",
+                "benchmark_source": "TEXT",
+            },
+        )
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_signals_signal_key ON signals(signal_key)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_code_generated ON signals(code, generated_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_horizon_updated ON outcomes(horizon, updated_at)")
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (SIGNAL_SCHEMA_VERSION, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        )
+        conn.execute(f"PRAGMA user_version={SIGNAL_SCHEMA_VERSION}")
         conn.commit()
 
 
 def store_signal(db_path: str | Path, record: SignalRecord) -> None:
     init_db(db_path)
     with closing(sqlite3.connect(db_path)) as conn:
+        payload = {
+            **asdict(record),
+            "reasons_positive": json.dumps(record.reasons_positive, ensure_ascii=False),
+            "reasons_negative": json.dumps(record.reasons_negative, ensure_ascii=False),
+        }
+        columns = tuple(payload)
+        assignments = ", ".join(f"{column}=excluded.{column}" for column in columns if column not in {"signal_id", "signal_key"})
+        conflict = "signal_key" if record.signal_key else "signal_id"
         conn.execute(
-            """
-            INSERT OR REPLACE INTO signals VALUES (
-                :signal_id, :generated_at, :code, :name, :action, :score, :confidence, :market_regime,
-                :leadership_score, :expected_edge, :risk_reward_ratio, :position_size_recommendation,
-                :data_quality_score, :reasons_positive, :reasons_negative, :source_snapshot_id
-            )
-            """,
-            {
-                **asdict(record),
-                "reasons_positive": json.dumps(record.reasons_positive, ensure_ascii=False),
-                "reasons_negative": json.dumps(record.reasons_negative, ensure_ascii=False),
-            },
+            f"INSERT INTO signals ({', '.join(columns)}) VALUES ({', '.join(':' + column for column in columns)}) "
+            f"ON CONFLICT({conflict}) DO UPDATE SET {assignments}",
+            payload,
         )
         conn.commit()
 
@@ -230,21 +359,30 @@ def store_signal(db_path: str | Path, record: SignalRecord) -> None:
 def store_outcome(db_path: str | Path, outcome: SignalOutcome) -> None:
     init_db(db_path)
     with closing(sqlite3.connect(db_path)) as conn:
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO outcomes VALUES (
-                :signal_id, :code, :horizon, :forward_return, :benchmark_relative_return,
-                :hit_target_before_stop, :hit_stop_before_target, :max_favorable_excursion,
-                :max_adverse_excursion, :realized_r_multiple, :action_correct, :updated_at
+        payload = {
+            **asdict(outcome),
+            "hit_target_before_stop": None if outcome.hit_target_before_stop is None else int(outcome.hit_target_before_stop),
+            "hit_stop_before_target": None if outcome.hit_stop_before_target is None else int(outcome.hit_stop_before_target),
+            "action_correct": None if outcome.action_correct is None else int(outcome.action_correct),
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        columns = tuple(payload)
+        assignments = ", ".join(
+            (
+                "outcome_status=CASE "
+                "WHEN outcomes.outcome_status='COMPLETE' AND excluded.outcome_status='PENDING' "
+                "THEN outcomes.outcome_status ELSE COALESCE(excluded.outcome_status, outcomes.outcome_status) END"
+                if column == "outcome_status"
+                else f"{column}=COALESCE(excluded.{column}, outcomes.{column})"
             )
-            """,
-            {
-                **asdict(outcome),
-                "hit_target_before_stop": None if outcome.hit_target_before_stop is None else int(outcome.hit_target_before_stop),
-                "hit_stop_before_target": None if outcome.hit_stop_before_target is None else int(outcome.hit_stop_before_target),
-                "action_correct": None if outcome.action_correct is None else int(outcome.action_correct),
-                "updated_at": datetime.now().isoformat(timespec="seconds"),
-            },
+            for column in columns
+            if column not in {"signal_id", "horizon", "updated_at"}
+        )
+        assignments += ", updated_at=excluded.updated_at"
+        conn.execute(
+            f"INSERT INTO outcomes ({', '.join(columns)}) VALUES ({', '.join(':' + column for column in columns)}) "
+            f"ON CONFLICT(signal_id, horizon) DO UPDATE SET {assignments}",
+            payload,
         )
         conn.commit()
 
@@ -402,6 +540,12 @@ def compute_forward_outcome(
         mae,
         realized_r,
         action_correct,
+        entry_at=str(data.index[0]),
+        exit_at=str(data.index[-1]),
+        entry_price=start,
+        realized_cost=cost_pct,
+        estimated_slippage=cost_pct,
+        outcome_status="COMPLETE" if fwd is not None else "UNAVAILABLE",
     )
 
 

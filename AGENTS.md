@@ -129,3 +129,15 @@ For planning-only tasks, update documentation only and do not change production 
 - Alerts are review gates, not trading instructions.
 - Do not fabricate values.
 - Do not implement automatic trading.
+
+## P0 Investment Safety Gates
+
+- Treat `LIVE`, `DELAYED`, `STALE`, `FALLBACK`, `DEMO`, `DISCONNECTED`, `ERROR`, and `UNAVAILABLE` as distinct data modes.
+- DEMO, hard-stale, missing, disconnected, and error data must not generate portfolio actions.
+- Reconcile declared total assets against holdings market value, cash, explicit other assets, and liabilities before optimization.
+- A material reconciliation mismatch, duplicate holding, or ineligible portfolio source must force `NO_TRADE` while preserving analytical context.
+- Missing alpha or quality evidence must display `WATCH` or `NO_TRADE`, not an executable trim/add instruction.
+- Signal writes must be idempotent and preserve decision time, earliest executable time, snapshot IDs, and model/feature/score/universe versions.
+- Outcome re-evaluation must not erase a previously completed result with pending or missing data.
+- Transaction-cost assumptions must carry a versioned policy ID; do not silently hardcode new tax or fee rates.
+- Shared SQLite and briefing file writes are opt-in through `STANCE_ENABLE_SHARED_WRITES` and require trusted persistent storage.

@@ -36,6 +36,7 @@ from .context import (
     DEFAULT_HISTORY_MIN_DAYS,
     HistoryCoverage,
     PortfolioContext,
+    PortfolioReconciliation,
     PortfolioContextValidationError,
     PortfolioHistory,
     PortfolioHistoryPoint,
@@ -56,6 +57,7 @@ from .context import (
     reconstruct_fixed_quantity_history,
     reconstruct_portfolio_history,
     reconstruct_portfolio_value_history,
+    reconcile_portfolio_context,
     validate_portfolio_context,
 )
 from .service import (
@@ -75,6 +77,7 @@ __all__ = [
     "Holding",
     "HistoryCoverage",
     "PortfolioContext",
+    "PortfolioReconciliation",
     "PortfolioContextValidationError",
     "PortfolioHistory",
     "PortfolioHistoryPoint",
@@ -126,6 +129,7 @@ __all__ = [
     "reconstruct_fixed_quantity_history",
     "reconstruct_portfolio_history",
     "reconstruct_portfolio_value_history",
+    "reconcile_portfolio_context",
     "rowsToHoldings",
     "validate_portfolio_context",
 ]

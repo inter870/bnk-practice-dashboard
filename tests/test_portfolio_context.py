@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 import math
 import unittest
@@ -12,6 +13,7 @@ from src.portfolio.context import (
     calculate_date_aligned_covariance_risk_contributions,
     calculate_portfolio_risk_contributions,
     parse_legacy_portfolio_csv,
+    reconcile_portfolio_context,
     reconstruct_portfolio_value_history,
 )
 from src.portfolio.models import Holding
@@ -81,7 +83,7 @@ class DataContractTests(unittest.TestCase):
             holdings=(holding("AAA", 10, 100), holding("BBB", 2, 200)),
             cash=600,
             declared_total=2_100,
-            meta=source_meta(),
+            meta=replace(source_meta(), data_mode="LIVE", investment_eligible=True),
         )
         self.assertEqual(context.holdings_market_value, 1_400)
         self.assertEqual(context.computed_total, 2_000)
@@ -117,6 +119,31 @@ class DataContractTests(unittest.TestCase):
         self.assertTrue(
             any(issue.code == "mixed_currency_requires_fx" for issue in error.exception.issues)
         )
+
+    def test_reconciliation_blocks_material_mismatch_and_duplicate_symbols(self) -> None:
+        context = PortfolioContext(
+            holdings=(holding("AAA", 1, 100), holding("AAA", 1, 100)),
+            cash=100,
+            declared_total=1_000,
+            meta=source_meta(),
+        )
+        result = reconcile_portfolio_context(context)
+        self.assertFalse(result.action_eligible)
+        self.assertIn("declared_total_mismatch", result.blocking_reason_codes)
+        self.assertIn("duplicate_symbols", result.blocking_reason_codes)
+
+    def test_other_assets_and_liabilities_are_reconciled_explicitly(self) -> None:
+        context = PortfolioContext(
+            holdings=(holding("AAA", 1, 100),),
+            cash=50,
+            other_assets=25,
+            liabilities=10,
+            declared_total=165,
+            meta=replace(source_meta(), data_mode="LIVE", investment_eligible=True),
+        )
+        self.assertEqual(165, context.computed_total)
+        result = reconcile_portfolio_context(context)
+        self.assertTrue(result.action_eligible)
 
 
 class LegacyCsvAdapterTests(unittest.TestCase):
