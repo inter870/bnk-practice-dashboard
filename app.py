@@ -48,7 +48,8 @@ from src.config.env import (
     sanitize_secret_text,
 )
 from src.discovery import build_universe, scan_universe
-from src.execution import build_execution_plan, legacy_cost_policy, should_block_for_execution
+from src.execution.cost_model import build_execution_plan, should_block_for_execution
+from src.execution.cost_policy import legacy_cost_policy
 from src.exits import build_exit_plan
 from src.monitoring.signal_ledger import (
     compute_forward_outcomes,
