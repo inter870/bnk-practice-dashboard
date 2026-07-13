@@ -78,6 +78,8 @@ ACTION_LABELS = {
     "SELL": "매도 검토",
     "AVOID": "제외 검토",
     "EXCLUDE": "투자 제외",
+    "WATCH": "관찰",
+    "NO_TRADE": "신규 행동 보류",
 }
 
 ASSET_CLASS_LABELS = {

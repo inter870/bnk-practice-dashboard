@@ -1,0 +1,35 @@
+enabled: false
+data_mode: fixture
+timezone: Asia/Seoul
+base_currency: KRW
+model_version: kr-alpha-baseline-v1
+fixture_seed: 20260713
+risk:
+  max_position_weight: 0.07
+  max_event_position_weight: 0.03
+  max_sector_weight: 0.30
+  max_kosdaq_position_weight: 0.05
+  minimum_cash_weight: 0.05
+  maximum_adv_participation: 0.10
+  maximum_days_to_exit: 5.0
+  turnover_budget: 0.30
+  target_volatility: 0.15
+  daily_loss_hard: -0.025
+  weekly_loss_hard: -0.05
+  drawdown_warning: -0.08
+  drawdown_deleverage: -0.12
+  drawdown_stop_new_entries: -0.15
+aggressive_sleeve:
+  enabled: false
+  paper_only: true
+  max_total_nav: 0.05
+  max_position_nav: 0.01
+  max_open_positions: 5
+  max_holding_days: 10
+transaction_costs:
+  policy_id: kr-alpha-fixture-cost-v1
+  commission_bps: 4.0
+  taxes_and_fees_bps: 18.0
+  spread_bps: 8.0
+  volatility_slippage_bps: 10.0
+  market_impact_coefficient: 12.0

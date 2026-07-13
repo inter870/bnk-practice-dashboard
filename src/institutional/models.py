@@ -5,6 +5,16 @@ from typing import Any, Generic, Literal, TypeVar
 
 
 DataStatus = Literal["loading", "ready", "empty", "error", "stale", "planned", "mock"]
+DataMode = Literal[
+    "LIVE",
+    "DELAYED",
+    "STALE",
+    "FALLBACK",
+    "DEMO",
+    "DISCONNECTED",
+    "ERROR",
+    "UNAVAILABLE",
+]
 T = TypeVar("T")
 
 
@@ -34,6 +44,14 @@ class DataSourceMeta:
     quality_flags: tuple[str, ...] = field(default_factory=tuple)
     provider_version: str | None = None
     error_code: str | None = None
+    observation_date: str | None = None
+    period_end: str | None = None
+    as_of: str | None = None
+    schema_version: str = "1"
+    quality_components: dict[str, int] = field(default_factory=dict)
+    quality_formula_version: str = "legacy"
+    investment_eligible: bool | None = None
+    availability_precision: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1039,7 +1057,7 @@ class OptimizerRecommendationRow:
     current_value: float
     target_value: float
     trade_value_estimate: float
-    action: Literal["BUY", "ADD", "HOLD", "TRIM", "SELL", "AVOID", "EXCLUDE"]
+    action: Literal["BUY", "ADD", "HOLD", "TRIM", "SELL", "AVOID", "EXCLUDE", "WATCH", "NO_TRADE"]
     final_alpha_score: int | None
     confidence_score: int | None
     liquidity_score: int | None
@@ -1048,6 +1066,9 @@ class OptimizerRecommendationRow:
     rejection_reasons: tuple[str, ...]
     risk_flags: tuple[str, ...]
     meta: DataSourceMeta
+    analytical_action: str | None = None
+    action_eligible: bool = True
+    blocking_reason_codes: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1070,6 +1091,9 @@ class OptimizerRecommendationRow:
             "rejection_reasons": list(self.rejection_reasons),
             "risk_flags": list(self.risk_flags),
             "meta": self.meta.to_dict(),
+            "analytical_action": self.analytical_action,
+            "action_eligible": self.action_eligible,
+            "blocking_reason_codes": list(self.blocking_reason_codes),
         }
 
 

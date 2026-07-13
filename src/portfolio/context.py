@@ -274,6 +274,8 @@ class PortfolioContext:
     meta: DataSourceMeta | None = None
     as_of_date: str | None = None
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    other_assets: float = 0.0
+    liabilities: float = 0.0
 
     def __post_init__(self) -> None:
         holdings = tuple(self.holdings or ())
@@ -290,6 +292,12 @@ class PortfolioContext:
         )
         object.__setattr__(self, "currency", currency)
         object.__setattr__(self, "warnings", _unique(self.warnings))
+        other_assets = _finite(self.other_assets)
+        liabilities = _finite(self.liabilities)
+        if other_assets is None or other_assets < 0 or liabilities is None or liabilities < 0:
+            raise ValueError("other_assets and liabilities must be finite non-negative values")
+        object.__setattr__(self, "other_assets", other_assets)
+        object.__setattr__(self, "liabilities", liabilities)
 
     @property
     def holdings_market_value(self) -> float:
@@ -301,7 +309,7 @@ class PortfolioContext:
 
     @property
     def computed_total(self) -> float:
-        return self.holdings_market_value + self.cash
+        return self.holdings_market_value + self.cash + self.other_assets - self.liabilities
 
     @property
     def total_value(self) -> float:
@@ -342,12 +350,78 @@ class PortfolioContext:
             "currency": self.currency,
             "as_of_date": self.as_of_date,
             "warnings": list(self.warnings),
+            "other_assets": self.other_assets,
+            "liabilities": self.liabilities,
             "holdings_market_value": self.holdings_market_value,
             "computed_total": self.computed_total,
             "declared_total_discrepancy": self.declared_total_discrepancy,
             "declared_total_discrepancy_ratio": self.declared_total_discrepancy_ratio,
             "meta": self.meta.to_dict() if self.meta else None,
         }
+
+
+@dataclass(frozen=True)
+class PortfolioReconciliation:
+    computed_total: float
+    declared_total: float | None
+    absolute_discrepancy: float | None
+    discrepancy_ratio: float | None
+    computed_cash_ratio: float | None
+    computed_weights: dict[str, float]
+    duplicate_symbols: tuple[str, ...]
+    reconciliation_status: Literal["RECONCILED", "WARNING", "BLOCKED"]
+    action_eligible: bool
+    blocking_reason_codes: tuple[str, ...]
+
+
+def reconcile_portfolio_context(
+    context: PortfolioContext,
+    *,
+    relative_tolerance: float = 0.01,
+    absolute_tolerance: float = 1.0,
+) -> PortfolioReconciliation:
+    total = context.computed_total
+    symbols = [str(_get(item, "symbol", "code", default="")).strip() for item in context.holdings]
+    duplicates = tuple(sorted({symbol for symbol in symbols if symbol and symbols.count(symbol) > 1}))
+    weights: dict[str, float] = {}
+    if total > 0:
+        for holding in context.holdings:
+            symbol = str(_get(holding, "symbol", "code", default="")).strip()
+            if symbol:
+                weights[symbol] = weights.get(symbol, 0.0) + _holding_market_value(holding) / total
+    discrepancy = context.declared_total_discrepancy
+    absolute = None if discrepancy is None else abs(discrepancy)
+    ratio = context.declared_total_discrepancy_ratio
+    tolerance = max(float(absolute_tolerance), max(total, 0.0) * max(float(relative_tolerance), 0.0))
+    blockers: list[str] = []
+    if total <= 0:
+        blockers.append("portfolio_total_non_positive")
+    if duplicates:
+        blockers.append("duplicate_symbols")
+    if absolute is not None and absolute > tolerance:
+        blockers.append("declared_total_mismatch")
+    if context.meta is not None:
+        if context.meta.stale_data_flag:
+            blockers.append("portfolio_data_stale")
+        if context.meta.missing_data_flag:
+            blockers.append("portfolio_data_missing")
+        if str(context.meta.data_mode).upper() in {"DEMO", "ERROR", "UNAVAILABLE", "DISCONNECTED"}:
+            blockers.append("portfolio_data_not_investment_eligible")
+    status: Literal["RECONCILED", "WARNING", "BLOCKED"] = "BLOCKED" if blockers else "RECONCILED"
+    if not blockers and absolute not in (None, 0.0):
+        status = "WARNING"
+    return PortfolioReconciliation(
+        computed_total=total,
+        declared_total=context.declared_total,
+        absolute_discrepancy=absolute,
+        discrepancy_ratio=ratio,
+        computed_cash_ratio=(context.cash / total if total > 0 else None),
+        computed_weights=weights,
+        duplicate_symbols=duplicates,
+        reconciliation_status=status,
+        action_eligible=not blockers,
+        blocking_reason_codes=tuple(blockers),
+    )
 
 
 def validate_portfolio_context(
@@ -385,6 +459,8 @@ def build_portfolio_context(
     meta: DataSourceMeta | None = None,
     as_of_date: str | None = None,
     warnings: Iterable[str] = (),
+    other_assets: Any = 0.0,
+    liabilities: Any = 0.0,
 ) -> ProviderResult[PortfolioContext]:
     source_meta = _meta_with_as_of(
         meta or _default_meta(currency, source="portfolio_context", as_of_date=as_of_date),
@@ -412,6 +488,8 @@ def build_portfolio_context(
         meta=source_meta,
         as_of_date=source_meta.as_of_date,
         warnings=_unique(warnings),
+        other_assets=float(other_assets),
+        liabilities=float(liabilities),
     )
     context_warnings = list(context.warnings)
     discrepancy = context.declared_total_discrepancy

@@ -129,3 +129,29 @@ For planning-only tasks, update documentation only and do not change production 
 - Alerts are review gates, not trading instructions.
 - Do not fabricate values.
 - Do not implement automatic trading.
+
+## P0 Investment Safety Gates
+
+- Treat `LIVE`, `DELAYED`, `STALE`, `FALLBACK`, `DEMO`, `DISCONNECTED`, `ERROR`, and `UNAVAILABLE` as distinct data modes.
+- DEMO, hard-stale, missing, disconnected, and error data must not generate portfolio actions.
+- Reconcile declared total assets against holdings market value, cash, explicit other assets, and liabilities before optimization.
+- A material reconciliation mismatch, duplicate holding, or ineligible portfolio source must force `NO_TRADE` while preserving analytical context.
+- Missing alpha or quality evidence must display `WATCH` or `NO_TRADE`, not an executable trim/add instruction.
+- Signal writes must be idempotent and preserve decision time, earliest executable time, snapshot IDs, and model/feature/score/universe versions.
+- Outcome re-evaluation must not erase a previously completed result with pending or missing data.
+- Transaction-cost assumptions must carry a versioned policy ID; do not silently hardcode new tax or fee rates.
+- Shared SQLite and briefing file writes are opt-in through `STANCE_ENABLE_SHARED_WRITES` and require trusted persistent storage.
+
+## KR Alpha Research Rules
+
+- Preserve the existing dashboard, nine core views, API contracts, query parameters, and environment-variable aliases.
+- KR Alpha additions must remain behind `KR_ALPHA_ENABLED` and default to disabled.
+- Enforce `available_at <= decision_time`; never use period end as information availability.
+- Fixture data must display `DEMO DATA` and must not generate investment-eligible actions.
+- Do not report a backtest without explicit transaction costs and next-tradable-bar timing.
+- Live trading defaults to false and must remain blocked unless every server-side interlock passes; this repository has no live order transport.
+- Every factor requires deterministic unit and leakage tests.
+- Persist model, factor, score, config, dataset, and decision-time lineage for promoted research.
+- Use timezone-aware Asia/Seoul timestamps for Korean-market decisions.
+- Prefer official provider adapters and never expose secrets to clients or logs.
+- Do not fabricate research performance or promote a fixture/paper result as real-data evidence.

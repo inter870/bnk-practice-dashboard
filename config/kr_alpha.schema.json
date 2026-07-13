@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KR Alpha configuration",
+  "type": "object",
+  "required": ["enabled", "data_mode", "risk", "aggressive_sleeve", "transaction_costs"],
+  "properties": {
+    "enabled": {"type": "boolean"},
+    "data_mode": {"enum": ["fixture", "paper", "live"]},
+    "timezone": {"const": "Asia/Seoul"},
+    "base_currency": {"const": "KRW"},
+    "fixture_seed": {"type": "integer"},
+    "risk": {"type": "object"},
+    "aggressive_sleeve": {"type": "object"},
+    "transaction_costs": {"type": "object"}
+  },
+  "additionalProperties": true
+}

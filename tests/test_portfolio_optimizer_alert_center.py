@@ -180,7 +180,9 @@ class PortfolioOptimizerAlertCenterTests(unittest.TestCase):
             allow_mock=False,
         )
         unscored = next(row for row in state.recommendation_rows if row.code == "009999")
-        self.assertEqual("TRIM", unscored.action)
+        self.assertEqual("WATCH", unscored.action)
+        self.assertFalse(unscored.action_eligible)
+        self.assertIn("alpha_data_unavailable", unscored.blocking_reason_codes)
         self.assertIsNone(unscored.final_alpha_score)
         self.assertIn("alpha_data_unavailable", unscored.risk_flags)
         self.assertAlmostEqual(
@@ -190,6 +192,24 @@ class PortfolioOptimizerAlertCenterTests(unittest.TestCase):
         )
         target_cash_point = next(point for point in state.data_points if point.key == "target_cash_ratio")
         self.assertAlmostEqual(float(target_cash_point.value), state.target_cash_ratio, places=6)
+
+    def test_reconciliation_gate_forces_no_trade_without_changing_current_weights(self):
+        rows = (alpha_row("001111", 90, sector="Tech"),)
+        state = build_portfolio_optimizer_alert_center(
+            alpha_state=alpha_state(rows),
+            holdings=[{"code": "001111", "current_weight": 0.06, "current_value": 6_000_000}],
+            total_portfolio_value=100_000_000,
+            cash_ratio=0.94,
+            allow_mock=False,
+            action_eligible=False,
+            blocking_reason_codes=("declared_total_mismatch",),
+        )
+        recommendation = state.recommendation_rows[0]
+        self.assertEqual("NO_TRADE", recommendation.action)
+        self.assertEqual(recommendation.current_weight, recommendation.target_weight)
+        self.assertEqual(0.0, recommendation.trade_value_estimate)
+        self.assertFalse(recommendation.action_eligible)
+        self.assertIn("declared_total_mismatch", recommendation.blocking_reason_codes)
 
     def test_alerts_trigger_correctly(self):
         state = build_portfolio_optimizer_alert_center(

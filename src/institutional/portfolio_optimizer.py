@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from math import isfinite
 from typing import Any, Iterable
@@ -230,7 +230,7 @@ def optimize_target_weights(
 
 def action_from_delta(current_weight: float, target_weight: float, rating: str, rejection_reasons: Iterable[str], min_trade_weight: float = 0.005) -> str:
     if rejection_reasons:
-        return "EXCLUDE" if "severe risk excluded" in set(rejection_reasons) else "AVOID"
+        return "EXCLUDE" if "severe risk excluded" in set(rejection_reasons) else "NO_TRADE"
     delta = target_weight - current_weight
     if target_weight <= 0 and current_weight > min_trade_weight:
         return "SELL"
@@ -263,7 +263,7 @@ def _build_recommendations(
             target_weight = max(0.0, targets.get(code, 0.0))
             current_value = _finite(holding.get("current_value")) or total_portfolio_value * current_weight
             target_value = total_portfolio_value * target_weight
-            action = "TRIM" if target_weight + constraints.min_trade_weight < current_weight else "HOLD"
+            action = "WATCH"
             meta = _meta(
                 source="Holdings input; forward alpha unavailable",
                 as_of_date=None,
@@ -290,11 +290,14 @@ def _build_recommendations(
                     final_alpha_score=None,
                     confidence_score=None,
                     liquidity_score=None,
-                    transaction_cost_bps=12.0 if action == "TRIM" else 0.0,
+                    transaction_cost_bps=0.0,
                     reasons=("현재 보유 비중과 포트폴리오 제약만 반영",),
                     rejection_reasons=("미래 알파 데이터 부족",),
                     risk_flags=("alpha_data_unavailable",),
                     meta=meta,
+                    analytical_action=("TRIM" if target_weight + constraints.min_trade_weight < current_weight else "HOLD"),
+                    action_eligible=False,
+                    blocking_reason_codes=("alpha_data_unavailable",),
                 )
             )
             continue
@@ -350,6 +353,9 @@ def _build_recommendations(
                 rejection_reasons=tuple(dict.fromkeys(rejection_reasons)),
                 risk_flags=tuple(dict.fromkeys(alpha.risk_flags)),
                 meta=meta,
+                analytical_action=action,
+                action_eligible=action not in {"NO_TRADE"},
+                blocking_reason_codes=tuple(dict.fromkeys(rejection_reasons)),
             )
         )
     return tuple(sorted(rows, key=lambda row: (row.action in {"EXCLUDE", "AVOID"}, -abs(row.weight_delta), -float(row.final_alpha_score or 0), row.code)))
@@ -444,6 +450,8 @@ def build_portfolio_optimizer_alert_center(
     fx_rates_state: KRWRatesFXDashboardState | None = None,
     now: datetime | None = None,
     allow_mock: bool = True,
+    action_eligible: bool = True,
+    blocking_reason_codes: Iterable[str] = (),
 ) -> PortfolioOptimizerAlertCenterState:
     constraints = constraints or OptimizerConstraints()
     if alpha_state is None and allow_mock:
@@ -493,6 +501,24 @@ def build_portfolio_optimizer_alert_center(
         now=now,
         fallback=fallback,
     )
+    gate_reasons = tuple(dict.fromkeys(str(item) for item in blocking_reason_codes if str(item)))
+    if not action_eligible:
+        recommendations = tuple(
+            replace(
+                row,
+                analytical_action=row.analytical_action or row.action,
+                action="NO_TRADE",
+                target_weight=row.current_weight,
+                weight_delta=0.0,
+                target_value=row.current_value,
+                trade_value_estimate=0.0,
+                transaction_cost_bps=0.0,
+                action_eligible=False,
+                blocking_reason_codes=tuple(dict.fromkeys((*row.blocking_reason_codes, *gate_reasons))),
+                rejection_reasons=tuple(dict.fromkeys((*row.rejection_reasons, *gate_reasons))),
+            )
+            for row in recommendations
+        )
     target_stock_ratio = min(1.0, sum(max(0.0, row.target_weight) for row in recommendations))
     target_cash_ratio = max(constraints.cash_buffer, 1.0 - target_stock_ratio)
     alerts = generate_portfolio_alerts(
@@ -524,7 +550,7 @@ def build_portfolio_optimizer_alert_center(
         DataPoint("cash_ratio", "Cash Ratio", cash, meta, f"{cash * 100:.1f}%"),
         DataPoint("target_cash_ratio", "Target Cash Ratio", target_cash_ratio, meta, f"{target_cash_ratio * 100:.1f}%"),
     )
-    status = "empty" if missing else "stale" if stale else "ready"
+    status = "empty" if missing else "stale" if stale or not action_eligible else "ready"
     summary = "Risk-controlled target weights and monitoring alerts are ready. No automatic order execution is implemented."
     if rejected:
         summary = "Optimizer excludes or avoids severe-risk candidates before assigning target weights."
@@ -532,6 +558,8 @@ def build_portfolio_optimizer_alert_center(
         summary = "Mock holdings and optimizer outputs are shown until real portfolio holdings are connected."
     elif alpha_coverage_missing:
         summary = "보유종목은 연결됐지만 미래 알파 데이터가 부족해 현재 비중과 위험 제약만 표시합니다."
+    elif not action_eligible:
+        summary = "포트폴리오 대사 또는 데이터 적격성 점검이 완료되지 않아 행동 생성을 차단했습니다."
     return PortfolioOptimizerAlertCenterState(
         module_id="PortfolioOptimizerAlertCenter",
         status=status,
@@ -544,6 +572,7 @@ def build_portfolio_optimizer_alert_center(
             "Recommendations are portfolio review actions only; no order placement API is created.",
         ),
         risk_flags=tuple(["stale_optimizer_inputs"] if stale else [])
+        + tuple(["portfolio_action_gate_blocked"] if not action_eligible else [])
         + tuple(["optimizer_alpha_coverage_missing"] if alpha_coverage_missing else [])
         + tuple(["optimizer_rejections_active"] if rejected else [])
         + tuple(["alerts_active"] if alerts else []),
