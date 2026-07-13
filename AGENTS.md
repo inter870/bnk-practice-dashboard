@@ -141,7 +141,6 @@ For planning-only tasks, update documentation only and do not change production 
 - Outcome re-evaluation must not erase a previously completed result with pending or missing data.
 - Transaction-cost assumptions must carry a versioned policy ID; do not silently hardcode new tax or fee rates.
 - Shared SQLite and briefing file writes are opt-in through `STANCE_ENABLE_SHARED_WRITES` and require trusted persistent storage.
-
 ## KR Alpha Research Rules
 
 - Preserve the existing dashboard, nine core views, API contracts, query parameters, and environment-variable aliases.
